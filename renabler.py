@@ -148,12 +148,9 @@ def translate_one(ins,mapping):
   else: #Any other instruction
     return None #No translation needs to be done
 
-def translate_all(bytes,base):
+def gen_mapping(md,bytes,base):
   mapping = {}
-  newbytes = b''
   newoff = 0
-  md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32) #TODO: Allow to toggle 32/64
-  md.detail = True
   for off in range(0,len(bytes)):
     insts = md.disasm(bytes[off:off+15],base+off)#longest possible x86/x64 instr is 15 bytes
     try:
@@ -161,12 +158,6 @@ def translate_all(bytes,base):
       mapping[base+off] = newoff
       newins = translate_one(ins,None)#In this pass, the mapping is incomplete
       if newins is not None:
-        #if off < 255:
-        #  print 'mapping %x to %x (and newins is %x)'%(off,newoff,len(newins))
-        #  print '%s'%newins.encode('hex')
-        #  tmps = md.disasm(newins,base+mapping[base+off])
-        #  for tmp in tmps:
-        #    print '0x%x(0x%x):\t%s\t%s'%(tmp.address,len(newbytes)+base,tmp.mnemonic,tmp.op_str)
         newoff+=len(newins)
       else:
         newoff+=1
@@ -178,6 +169,10 @@ def translate_all(bytes,base):
   lookup_function_offset = len(bytes)+base #Where we pretend it was in the old code (after the end)
   mapping[len(bytes)+base] = newoff #Should be one after the last instruction in the new mapping
   print 'lookup mapping %s:%s'%(hex(lookup_function_offset),hex(newoff+base))
+  return mapping
+
+def gen_newcode(md,bytes,base,mapping):
+  newbytes = b''
   for off in range(0,len(bytes)):
     insts = md.disasm(bytes[off:off+15],base+off)#longest possible x86/x64 instr is 15 bytes
     try:
@@ -196,7 +191,7 @@ def translate_all(bytes,base):
     except StopIteration:
       newbytes+=bytes[off] #No change, just add byte
   #TODO: Right here append the actual code for the lookup function onto the end of newbytes
-  return (mapping,newbytes)
+  return newbytes
 
 def renable(fname):
   offs = size = addr = 0
@@ -230,8 +225,13 @@ def renable(fname):
     for seg in elffile.iter_segments():
       if seg.header['p_flags'] == 5 and seg.header['p_type'] == 'PT_LOAD': #Executable load seg
         print "Base address: %s"%hex(seg.header['p_vaddr'])
-        (mapping,newbytes) = translate_all(seg.data(),seg.header['p_vaddr'])
-        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32) #TODO: Allow to toggle 32/64
+        md.detail = True
+        bytes = seg.data()
+        base = seg.header['p_vaddr']
+        mapping = gen_mapping(md,bytes,base)
+        newbytes = gen_newcode(md,bytes,base,mapping)
+        #(mapping,newbytes) = translate_all(seg.data(),seg.header['p_vaddr'])
         #insts = md.disasm(newbytes[0x8048360-seg.header['p_vaddr']:0x8048441-seg.header['p_vaddr']],0x8048360)
         #The "mysterious" bytes between the previously patched instruction 
         #(originally at 0x804830b) are the remaining bytes from that jmp instruction!
