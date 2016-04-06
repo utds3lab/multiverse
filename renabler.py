@@ -148,26 +148,47 @@ def translate_one(ins,mapping):
   else: #Any other instruction
     return None #No translation needs to be done
 
+def brute_force_disasm():
+  pass
+
 def gen_mapping(md,bytes,base):
   mapping = {}
-  newoff = 0
+  maplist = []
   for off in range(0,len(bytes)):
-    insts = md.disasm(bytes[off:off+15],base+off)#longest possible x86/x64 instr is 15 bytes
-    try:
-      ins = insts.next()
-      mapping[base+off] = newoff
-      newins = translate_one(ins,None)#In this pass, the mapping is incomplete
-      if newins is not None:
-        newoff+=len(newins)
-      else:
-        newoff+=1
-    except StopIteration:
-      newoff+=1 #Just move forward one byte
+    instoff = off #instruction offset is the offset in this decoding
+    newoff = off #For each decoding, we have a new offset, starting at off
+    currmap = {}
+    print "DOING OFFSET %s"%off
+    while instoff < len(bytes):
+      in_mapping = False
+      for m in maplist:
+        if base+instoff in m:
+          in_mapping = True
+          break
+      if in_mapping:
+        break
+      insts = md.disasm(bytes[instoff:instoff+15],base+instoff)#longest x86/x64 instr is 15 bytes
+      try:
+        ins = insts.next()
+        currmap[base+instoff] = newoff
+        instoff+=len(ins.bytes) #Move instoff only as far as the next old instruction
+        newins = translate_one(ins,None)#In this pass, the mapping is incomplete
+        if newins is not None:
+          newoff+=len(newins) #Move our mapping's offset further than instoff (size of NEW instructions)
+        else:
+          newoff+=len(ins.bytes)
+      except StopIteration:
+        newoff+=1 #Just move forward one byte
+        instoff+=1
+    if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
+      maplist.append(currmap)
+  for m in maplist:
+    mapping.update(m) #Add all entries from each dict to mapping, linearly
   #Now that the mapping is complete, we can add the mapping of the lookup function to the end
   #TODO: Perhaps it would be more efficient if we guaranteed the function to be aligned?
   global lookup_function_offset
   lookup_function_offset = len(bytes)+base #Where we pretend it was in the old code (after the end)
-  mapping[len(bytes)+base] = newoff #Should be one after the last instruction in the new mapping
+  mapping[len(bytes)+base] = 0xffff #TODO: actual loc #Should be 1 after last instruction in new mapping
   print 'lookup mapping %s:%s'%(hex(lookup_function_offset),hex(newoff+base))
   return mapping
 
