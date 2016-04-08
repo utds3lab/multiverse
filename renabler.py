@@ -148,17 +148,46 @@ def translate_one(ins,mapping):
   else: #Any other instruction
     return None #No translation needs to be done
 
-def brute_force_disasm():
-  pass
+def brute_force_disasm(md,bytes,base,instoff,maplist):
+  while instoff < len(bytes):
+    in_mapping = False
+    for m in maplist:
+      if base+instoff in m:
+        in_mapping = True
+        break
+    if in_mapping:
+      break
+    insts = md.disasm(bytes[instoff:instoff+15],base+instoff)#longest x86/x64 instr is 15 bytes
+    try:
+      ins = insts.next() #May raise StopIteration
+      instoff+=len(ins.bytes)
+      yield ins
+    except StopIteration: #Not a valid instruction
+      instoff+=1
+      yield None
 
 def gen_mapping(md,bytes,base):
   mapping = {}
   maplist = []
   for off in range(0,len(bytes)):
     instoff = off #instruction offset is the offset in this decoding
-    newoff = off #For each decoding, we have a new offset, starting at off
+    newoff = 0 #For each decoding, we have a new offset, starting at 0
+    #Each mapping in maplist has offset from wherever it starts, so
+    #when we put them together we have the freedom to shuffle their positions
     currmap = {}
     print "DOING OFFSET %s"%off
+    for ins in brute_force_disasm(md,bytes,base,off,maplist):
+      if ins is None: #If the instruction was invalid, stop current disassembly
+        break
+      currmap[ins.address] = newoff
+      newins = translate_one(ins,None) #In this pass, the mapping is incomplete
+      if newins is not None:
+        newoff+=len(newins) #Move our mapping's offset by the size of the new instructions
+      else:
+        newoff+=len(ins.bytes) #Move our mapping's offset by the size of the original instruction
+    if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
+      maplist.append(currmap)
+    '''
     while instoff < len(bytes):
       in_mapping = False
       for m in maplist:
@@ -170,6 +199,7 @@ def gen_mapping(md,bytes,base):
       insts = md.disasm(bytes[instoff:instoff+15],base+instoff)#longest x86/x64 instr is 15 bytes
       try:
         ins = insts.next()
+        print "%s AND %s"%(base+instoff,ins.address)
         currmap[base+instoff] = newoff
         instoff+=len(ins.bytes) #Move instoff only as far as the next old instruction
         newins = translate_one(ins,None)#In this pass, the mapping is incomplete
@@ -182,6 +212,7 @@ def gen_mapping(md,bytes,base):
         instoff+=1
     if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
       maplist.append(currmap)
+    '''
   for m in maplist:
     mapping.update(m) #Add all entries from each dict to mapping, linearly
   #Now that the mapping is complete, we can add the mapping of the lookup function to the end
