@@ -49,13 +49,13 @@ callbacks = {'__libc_start_main':[0,3,4]}
 
 #Do stuff with call/jmp to anything in plt to check for functions with callbacks
 
-def remap_target(ins,mapping,target,offs): #Only works for statically identifiable targets
+def remap_target(addr,mapping,target,offs): #Only works for statically identifiable targets
   newtarget = '0x8f'
   if mapping is not None and target in mapping:#Second pass, known mapping
-    newtarget = mapping[target]-(mapping[ins.address]+offs) #Offset from curr location in mapping
+    newtarget = mapping[target]-(mapping[addr]+offs) #Offset from curr location in mapping
     newtarget = hex(newtarget)
     print "original target: %s"%hex(target)
-    print "%s-(%s+%s) = %s"%(hex(mapping[target]),hex(mapping[ins.address]),hex(offs),newtarget)
+    print "%s-(%s+%s) = %s"%(hex(mapping[target]),hex(mapping[addr]),hex(offs),newtarget)
   return newtarget
 
 def in_plt(target):
@@ -89,7 +89,7 @@ def get_callback_code(ins,mapping,name):
     cb_before = callback_template_before%ind
     code+=asm(cb_before) #Assemble the code to save the value at that stack offset to eax
     size=len(code) #Since jmp/call is relative, need the address we're coming from
-    lookup_target = remap_target(ins,mapping,lookup_function_offset,size)
+    lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
     cb_after = callback_template_after%(lookup_target,ind)
     code+=asm(cb_after)
   restore_eax = restore_reg_template%('eax','-12')
@@ -110,7 +110,7 @@ def translate_uncond(ins,mapping):
       entry = get_plt_entry(target)
       if entry is not None and entry in callbacks.keys():
         callback_code = get_callback_code(ins,mapping,entry)
-    newtarget = remap_target(ins,mapping,target,len(callback_code))
+    newtarget = remap_target(ins.address,mapping,target,len(callback_code))
     print "(pre)new length: %s"%len(callback_code)
     print "target: %s"%hex(target)
     print "newtarget: %s"%newtarget
@@ -123,6 +123,7 @@ def translate_uncond(ins,mapping):
 
 def translate_cond(ins,mapping):
   if ins.mnemonic in ['jcxz','jecxz']: #These instructions have no long encoding
+    print "WARNING: encountered unhandled opcode %s"%ins.mnemonic
     return None #TODO: handle special case for these instructions
   else:
     #print ins.mnemonic +' ' +ins.op_str
@@ -130,7 +131,8 @@ def translate_cond(ins,mapping):
     #print ins.op_count()
     #print ins.operands
     target = ins.operands[0].imm # int(ins.op_str,16) The destination of this instruction
-    newtarget = remap_target(ins,mapping,target,0)
+    newtarget = remap_target(ins.address,mapping,target,0)
+    print "target: %x remapped target: %s"%(target,newtarget)
     patched = asm(ins.mnemonic + ' $+' + newtarget)
     #TODO: some instructions encode to 6 bytes, some to 5, some to 2.  How do we know which?
     #For example, for CALL, it seems to only be 5 or 2 depending on offset.
@@ -168,6 +170,7 @@ def brute_force_disasm(md,bytes,base,instoff,maplist):
 
 def gen_mapping(md,bytes,base):
   mapping = {}
+  #Each mapping in maplist holds the length of that instruction (or instructions if patched)
   maplist = []
   for off in range(0,len(bytes)):
     instoff = off #instruction offset is the offset in this decoding
@@ -175,17 +178,24 @@ def gen_mapping(md,bytes,base):
     #Each mapping in maplist has offset from wherever it starts, so
     #when we put them together we have the freedom to shuffle their positions
     currmap = {}
-    print "DOING OFFSET %s"%off
+    print "[MAPPING] DOING OFFSET %s"%off
     for ins in brute_force_disasm(md,bytes,base,off,maplist):
       if ins is None: #If the instruction was invalid, stop current disassembly
         break
-      currmap[ins.address] = newoff
+      #print '0x%x:\t%s\t%s'%(ins.address,ins.mnemonic,ins.op_str)
       newins = translate_one(ins,None) #In this pass, the mapping is incomplete
       if newins is not None:
+        currmap[ins.address] = len(newins)
         newoff+=len(newins) #Move our mapping's offset by the size of the new instructions
       else:
+        currmap[ins.address] = len(ins.bytes)
         newoff+=len(ins.bytes) #Move our mapping's offset by the size of the original instruction
     if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
+      #Add an instruction to the last patched instruction jumping to wherever the next instruction
+      #would map to, since it isn't contiguous
+      reroute = asm('jmp $+0x8f')
+      last = max(currmap.keys())
+      currmap[last]+=len(reroute)
       maplist.append(currmap)
     '''
     while instoff < len(bytes):
@@ -213,8 +223,12 @@ def gen_mapping(md,bytes,base):
     if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
       maplist.append(currmap)
     '''
+  offset = 0
   for m in maplist:
-    mapping.update(m) #Add all entries from each dict to mapping, linearly
+    for k in sorted(m.keys()):
+      size = m[k]
+      mapping[k] = offset
+      offset+=size #Add the size of this instruction to the total offset
   #Now that the mapping is complete, we can add the mapping of the lookup function to the end
   #TODO: Perhaps it would be more efficient if we guaranteed the function to be aligned?
   global lookup_function_offset
@@ -224,8 +238,44 @@ def gen_mapping(md,bytes,base):
   return mapping
 
 def gen_newcode(md,bytes,base,mapping):
-  newbytes = b''
+  newbytes = ''
+  bytemap = {}
+  maplist = [] #This maplist maps addresses to patched instruction bytes instead of a new address
   for off in range(0,len(bytes)):
+    currmap = {}
+    #print "[CODE] DOING OFFSET %s"%off
+    for ins in brute_force_disasm(md,bytes,base,off,maplist):
+      if ins is None: #If the instruction was invalid, stop current disassembly
+        break
+      #print '0x%x:\t%s\t%s'%(ins.address,ins.mnemonic,ins.op_str)
+      newins = translate_one(ins,mapping) #In this pass, the mapping is incomplete
+      if newins is not None:
+        tmps = md.disasm(newins,base+mapping[ins.address])
+        print 'address: %x off: %x mapping[addr]: %x'%(ins.address,off,mapping[ins.address])
+        for tmp in tmps:
+          print '0x%x(0x%x):\t%s\t%s'%(tmp.address,ins.address,tmp.mnemonic,tmp.op_str)
+        print '---'
+        currmap[ins.address] = newins #Old address maps to these new instructions
+      else:
+        currmap[ins.address] = str(ins.bytes) #This instruction is unchanged, and its old address maps to it
+    if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
+      #Add an instruction to the last patched instruction jumping to wherever the next instruction
+      #would map to, since it isn't contiguous
+      last = max(currmap.keys())
+      ins = md.disasm(bytes[last-base:(last-base+15)],last).next() #should always disassemble
+      size = len(currmap[last]) #size of instructions we need to skip over
+      target = last+len(ins.bytes) #address of where in the original code we would want to jmp to
+      next_target = remap_target(last,mapping,target,size)
+      reroute = asm('jmp $+'+next_target)
+      if len(reroute) == 2: #Short encoding, which we do not want
+        reroute+='\x90\x90\x90' #Add padding of 3 NOPs
+      currmap[last]+=reroute #add bytes of unconditional jump
+      maplist.append(currmap)
+  for m in maplist: #For each code mapping, in order of discovery
+    for k in sorted(m.keys()): #For each original address to code, in order of original address
+      newbytes+=m[k]
+  print newbytes[0:10]
+  '''
     insts = md.disasm(bytes[off:off+15],base+off)#longest possible x86/x64 instr is 15 bytes
     try:
       ins = insts.next()
@@ -233,7 +283,7 @@ def gen_newcode(md,bytes,base,mapping):
       if newins is not None:
         #print '%s'%newins.encode('hex')
         tmps = md.disasm(newins,base+mapping[base+off])
-        print 'off: %x mapping[base+off]: %x len(newbytes): %x '%(off,mapping[base+off],len(newbytes))
+        print 'address: %x off: %x mapping[base+off]: %x len(newbytes): %x '%(ins.address,off,mapping[base+off],len(newbytes))
         for tmp in tmps:
           print '0x%x(0x%x):\t%s\t%s'%(tmp.address,len(newbytes)+base,tmp.mnemonic,tmp.op_str)
         print '---'
@@ -242,6 +292,7 @@ def gen_newcode(md,bytes,base,mapping):
         newbytes+=bytes[off]
     except StopIteration:
       newbytes+=bytes[off] #No change, just add byte
+    '''
   #TODO: Right here append the actual code for the lookup function onto the end of newbytes
   return newbytes
 
@@ -251,6 +302,7 @@ def renable(fname):
     elffile = ELFFile(f)
     relplt = None
     dynsym = None
+    entry = elffile.header.e_entry #application entry point
     for section in elffile.iter_sections():
       if section.name == '.text':
         print "Found .text"
@@ -268,11 +320,14 @@ def renable(fname):
       if section.name == '.dynsym':
         dynsym = section
     plt['entries'] = {}
-    for rel in relplt.iter_relocations():
-      got_off = rel['r_offset'] #Get GOT offset address for this entry
-      ds_ent = ELF32_R_SYM(rel['r_info']) #Get offset into dynamic symbol table
-      name = dynsym.get_symbol(ds_ent).name #Get name of symbol
-      plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
+    if relplt is not None:
+      for rel in relplt.iter_relocations():
+        got_off = rel['r_offset'] #Get GOT offset address for this entry
+        ds_ent = ELF32_R_SYM(rel['r_info']) #Get offset into dynamic symbol table
+        name = dynsym.get_symbol(ds_ent).name #Get name of symbol
+        plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
+    else:
+        print 'binary does not contain plt'
     print plt
     for seg in elffile.iter_segments():
       if seg.header['p_flags'] == 5 and seg.header['p_type'] == 'PT_LOAD': #Executable load seg
@@ -290,7 +345,8 @@ def renable(fname):
         #So even though there was nothing between that jmp at the end of that plt entry
         #and the start of the next plt entry, now there are 4 bytes from the rest of the jmp.
         #This is a good example of why I need to take a different approach to generating the mapping.
-        insts = md.disasm(newbytes[0x80483af-seg.header['p_vaddr']:0x80483bf-seg.header['p_vaddr']],0x80483af)
+        #insts = md.disasm(newbytes[0x80483af-seg.header['p_vaddr']:0x80483bf-seg.header['p_vaddr']],0x80483af)
+        insts = md.disasm(newbytes,0x8048000)
         for ins in insts:
           print '0x%x:\t%s\t%s'%(ins.address,ins.mnemonic,ins.op_str)
         tmpdct = {hex(k): (lambda x:hex(x+seg.header['p_vaddr']))(v) for k,v in mapping.items()}

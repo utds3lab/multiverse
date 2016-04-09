@@ -1,1 +1,4 @@
 *~
+nolibc
+teeny
+*.o
