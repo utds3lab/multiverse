@@ -2,3 +2,4 @@
 nolibc
 teeny
 *.o
+.*

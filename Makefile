@@ -1,5 +1,5 @@
 
-all: teeny nolibc
+all: teeny nolibc eip
 
 teeny: 
 	nasm -f elf teeny.asm
@@ -9,5 +9,9 @@ nolibc:
 	nasm -f elf nolibc.asm
 	gcc -o nolibc -Wall -m32 -s -nostdlib nolibc.o
 
+eip:
+	nasm -f elf eip.asm
+	gcc -o eip -Wall -m32 -s -nostartfiles eip.o
+
 clean:
-	rm -f teeny.o teeny nolibc.o nolibc
+	rm -f teeny.o teeny nolibc.o nolibc eip.o eip

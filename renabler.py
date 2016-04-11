@@ -178,7 +178,7 @@ def gen_mapping(md,bytes,base):
     #Each mapping in maplist has offset from wherever it starts, so
     #when we put them together we have the freedom to shuffle their positions
     currmap = {}
-    print "[MAPPING] DOING OFFSET %s"%off
+    #print "[MAPPING] DOING OFFSET %s"%off
     for ins in brute_force_disasm(md,bytes,base,off,maplist):
       if ins is None: #If the instruction was invalid, stop current disassembly
         break
@@ -355,6 +355,9 @@ def renable(fname):
         output = ''
         for key in keys:
           output+='%s:%s '%(key,tmpdct[key])
+        print 'entry point: %x'%mapping[entry]
+        with open('newbytes','wb') as f2:
+          f2.write(newbytes)
         #print output
           
 '''
