@@ -96,12 +96,41 @@ def get_callback_code(ins,mapping,name):
   code+=asm(restore_eax)
   return code
 
+def get_direct_uncond_code(ins,mapping,target):
+  #save_eax = save_reg_template%('-12','eax')
+  #code:
+  '''
+  mov [esp-12], eax	;save old eax value
+  mov eax, %s		;read location in memory from which we will get destination
+  call $+%s		;call lookup function
+  mov [esp-4], eax	;save new eax value (destination mapping)
+  mov eax, [esp-12]	;restore old eax value
+  %s [esp-4]		;jmp/call to new address
+  '''
+  template_before = '''
+  mov [esp-12], eax
+  mov eax, %s
+  '''
+  template_after = '''
+  call $+%s
+  mov [esp-4], eax
+  mov eax, [esp-12]
+  %s [esp-4]
+  '''
+  code = asm(template_before%(target))
+  size = len(code)
+  lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
+  code+=asm(template_after%(lookup_target,ins.mnemonic))
+  return code
+
 def translate_uncond(ins,mapping):
   op = ins.operands[0] #Get operand
   if op.type == X86_OP_REG: # e.g. call eax or jmp ebx
-    pass
+    target = ins.reg_name(op.reg)
+    return get_direct_uncond_code(ins,mapping,target)
   elif op.type == X86_OP_MEM: # e.g. call [eax + ecx*4 + 0xcafebabe] or jmp [ebx+ecx]
-    pass
+    target = ins.op_str
+    return get_direct_uncond_code(ins,mapping,target)
   elif op.type == X86_OP_IMM: # e.g. call 0xdeadbeef or jmp 0xcafebada
     target = op.imm
     callback_code = b'' #If this ends up not being a plt call with callbacks, add no code
