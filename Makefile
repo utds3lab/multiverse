@@ -1,5 +1,5 @@
 
-all: teeny nolibc eip mem
+all: teeny nolibc eip mem lookup
 
 teeny: 
 	nasm -f elf teeny.asm
@@ -17,5 +17,9 @@ mem:
 	nasm -f elf mem.asm
 	gcc -o mem -Wall -m32 -s -nostartfiles mem.o
 
+lookup:
+	nasm -f elf lookup.asm
+	gcc -o lookup -Wall -m32 -s -nostartfiles lookup.o
+
 clean:
-	rm -f teeny.o teeny nolibc.o nolibc eip.o eip mem.o mem
+	rm -f teeny.o teeny nolibc.o nolibc eip.o eip mem.o mem lookup.o lookup

@@ -6,6 +6,7 @@ import sys
 import struct
 from pwn import asm,context
 context(os='linux',arch='i386')
+import cProfile
 
 #From Brian's Static_phase.py
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -122,6 +123,9 @@ def get_direct_uncond_code(ins,mapping,target):
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
   code+=asm(template_after%(lookup_target,ins.mnemonic))
   return code
+
+def get_lookup_code(lookup_off,mapping_off):
+  pass
 
 def translate_uncond(ins,mapping):
   op = ins.operands[0] #Get operand
@@ -266,6 +270,17 @@ def gen_mapping(md,bytes,base):
   print 'lookup mapping %s:%s'%(hex(lookup_function_offset),hex(newoff+base))
   return mapping
 
+def write_mapping(mapping,base,size):
+  bytes = b''
+  for addr in range(base,base+size):
+    if addr in mapping:
+      bytes+=struct.pack('<I',mapping[addr]) #Write our offset in little endian
+    else:
+      print 'No mapping for 0x%x'%addr
+      bytes+=struct.pack('<I',0xffffffff) #Write an invalid offset if not in mapping
+  print 'last address was 0x%x'%(base+size)
+  return bytes
+
 def gen_newcode(md,bytes,base,mapping):
   newbytes = ''
   bytemap = {}
@@ -367,6 +382,7 @@ def renable(fname):
         base = seg.header['p_vaddr']
         mapping = gen_mapping(md,bytes,base)
         newbytes = gen_newcode(md,bytes,base,mapping)
+        #maptext = write_mapping(mapping,base,len(bytes))
         #(mapping,newbytes) = translate_all(seg.data(),seg.header['p_vaddr'])
         #insts = md.disasm(newbytes[0x8048360-seg.header['p_vaddr']:0x8048441-seg.header['p_vaddr']],0x8048360)
         #The "mysterious" bytes between the previously patched instruction 
@@ -388,6 +404,16 @@ def renable(fname):
         with open('newbytes','wb') as f2:
           f2.write(newbytes)
         #print output
+        print mapping[base]
+        print mapping[base+1]
+        maptext = write_mapping(mapping,base,len(bytes))
+        cache = ''
+        for x in maptext:
+          #print x
+          cache+='%d,'%int(x.encode('hex'),16)
+        print cache
+	print maptext.encode('hex')
+        print '0x%x'%(base+len(bytes))
           
 '''
   with open(fname,'rb') as f:
@@ -417,5 +443,6 @@ def renable(fname):
 if __name__ == '__main__':
   if len(sys.argv) == 2:
     renable(sys.argv[1])
+    #cProfile.run('renable(sys.argv[1])')
   else:
     print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]
