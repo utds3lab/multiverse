@@ -42,6 +42,7 @@ plt = {}
 #TODO: Set actual address of function
 lookup_function_offset = 0x8f
 mapping_offset = 0x8f
+get_pc_thunk = None
 #List of library functions that have callback args; each function in the dict has a list of
 #the arguments passed to it that are a callback (measured as the index of which argument it is)
 #TODO: Handle more complex x64 calling convention
@@ -191,6 +192,12 @@ def translate_uncond(ins,mapping):
   elif op.type == X86_OP_IMM: # e.g. call 0xdeadbeef or jmp 0xcafebada
     target = op.imm
     callback_code = b'' #If this ends up not being a plt call with callbacks, add no code
+    if get_pc_thunk is not None and target == get_pc_thunk: #Special case for calls to thunk
+      print 'Found call to get_pc_thunk at 0x%x'%ins.address
+      thunk_ret = ins.address+len(ins.bytes) #Address directly after call instruction
+      #Replace the call with a mov instruction setting ebx to what WOULD have been the
+      #result in the original code, assuming that the original code is in its original place.
+      return asm('mov ebx,%s'%thunk_ret)
     if in_plt(target):
       print 'plt found @%s: %s %s'%(hex(ins.address),ins.mnemonic,ins.op_str)
       entry = get_plt_entry(target)
@@ -408,6 +415,7 @@ def renable(fname):
     relplt = None
     dynsym = None
     entry = elffile.header.e_entry #application entry point
+    global get_pc_thunk
     for section in elffile.iter_sections():
       if section.name == '.text':
         print "Found .text"
@@ -424,6 +432,11 @@ def renable(fname):
         relplt = section
       if section.name == '.dynsym':
         dynsym = section
+      if section.name == '.symtab':
+        for sym in section.iter_symbols():
+          if sym.name == '__x86.get_pc_thunk.bx':
+            get_pc_thunk = sym.entry['st_value'] #Address of thunk
+        #section.get_symbol_by_name('__x86.get_pc_thunk.bx')) #Apparently this is in a newer pyelftools
     plt['entries'] = {}
     if relplt is not None:
       for rel in relplt.iter_relocations():
@@ -461,7 +474,6 @@ def renable(fname):
         output = ''
         for key in keys:
           output+='%s:%s '%(key,tmpdct[key])
-        print 'entry point: %x'%mapping[entry]
         with open('newbytes','wb') as f2:
           f2.write(newbytes)
         #print output
@@ -472,8 +484,8 @@ def renable(fname):
         for x in maptext:
           #print x
           cache+='%d,'%int(x.encode('hex'),16)
-        print cache
-	print maptext.encode('hex')
+        #print cache
+	#print maptext.encode('hex')
         print '0x%x'%(base+len(bytes))
 	print 'code increase: %d%%'%(((len(newbytes)-len(bytes))/float(len(bytes)))*100)
         lookup = get_lookup_code(base,len(bytes),mapping[lookup_function_offset],0x8f)
@@ -488,6 +500,7 @@ def renable(fname):
           print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
         if 0x80482b4 in mapping:
 		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
+        print 'entry point: %x'%mapping[entry]
           
 '''
   with open(fname,'rb') as f:

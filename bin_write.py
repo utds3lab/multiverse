@@ -17,8 +17,10 @@ elf.add_section(newcode, sh_addr = 0x09000000)
 #elf.set_entry_point(0x09000230) #eip
 #elf.set_entry_point(0x09000228) #mem
 #elf.set_entry_point(0x09002278) #64-bit echo (which therefore wouldn't work regardless)
-elf.set_entry_point(0x09000765) #simplest (_init at 0xc78)
+#elf.set_entry_point(0x09000765) #simplest (_init at 0xc78)
 #elf.set_entry_point(0x0900026c) #lookup
+#(0x8048cf0 - 0x8048000)+0x59838 = 0x5a428 (lookup index)
+elf.set_entry_point(0x09001ce8) #bzip2
 
 elf.write_new_elf('relocated')
 
