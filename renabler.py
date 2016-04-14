@@ -41,6 +41,7 @@ def ELF32_R_SYM(val):
 plt = {}
 #TODO: Set actual address of function
 lookup_function_offset = 0x8f
+mapping_offset = 0x8f
 #List of library functions that have callback args; each function in the dict has a list of
 #the arguments passed to it that are a callback (measured as the index of which argument it is)
 #TODO: Handle more complex x64 calling convention
@@ -124,8 +125,60 @@ def get_direct_uncond_code(ins,mapping,target):
   code+=asm(template_after%(lookup_target,ins.mnemonic))
   return code
 
-def get_lookup_code(lookup_off,mapping_off):
-  pass
+def get_lookup_code(base,size,lookup_off,mapping_off):
+  #Example assembly for lookup function
+  '''
+	push edx
+	mov edx,eax
+	call get_eip
+  get_eip:
+	pop eax			;Get current instruction pointer
+	sub eax,0x8248		;Subtract offset from instruction pointer val to get new text base addr
+	sub edx,0x8048000	;Compare to start (exclusive) and set edx to an offset in the mapping
+	jl outside		;Out of bounds (too small)
+	cmp edx,0x220		;Compare to end (inclusive) (note we are now comparing to the size)
+	jge outside		;Out of bounds (too big)
+	mov edx,[mapping+edx*4]	;Retrieve mapping entry (can't do this directly in generated func)
+	cmp edx, 0xffffffff	;Compare to invalid entry
+	je failure		;It was an invalid entry
+	add eax,edx		;Add the offset of the destination to the new text section base addr
+	pop edx
+	ret
+  outside:			;If the address is out of the mapping bounds, return original address
+	add edx,0x8048000	;Undo subtraction of base, giving us the originally requested address
+	mov eax,edx		;Place the original request back in eax
+	pop edx
+	ret
+  failure:
+	hlt
+  '''
+  lookup_template = '''
+	push edx
+	mov edx,eax
+	call get_eip
+  get_eip:
+	pop eax
+	sub eax,%s
+	sub edx,%s
+	jl outside
+	cmp edx,%s
+	jge outside
+	mov edx,[eax+edx*4+%s]
+	cmp edx, 0xffffffff
+	je failure
+	add eax,edx
+	pop edx
+	ret
+  outside:
+	add edx,%s
+	mov eax,edx
+	pop edx
+	ret
+  failure:
+	hlt
+  '''
+  #retrieve eip 8 bytes after start of lookup function
+  return asm(lookup_template%(lookup_off+8,base,size,mapping_off,base)) 
 
 def translate_uncond(ins,mapping):
   op = ins.operands[0] #Get operand
@@ -265,9 +318,15 @@ def gen_mapping(md,bytes,base):
   #Now that the mapping is complete, we can add the mapping of the lookup function to the end
   #TODO: Perhaps it would be more efficient if we guaranteed the function to be aligned?
   global lookup_function_offset
+  global mapping_offset
   lookup_function_offset = len(bytes)+base #Where we pretend it was in the old code (after the end)
-  mapping[len(bytes)+base] = 0xffff #TODO: actual loc #Should be 1 after last instruction in new mapping
+  mapping_offset = len(bytes)+base+1 #Where we pretend the mapping was in the old code
+  mapping[len(bytes)+base] = offset #Should be 1 after last instruction in new mapping
+  #Don't yet know mapping offset; we must compute it
+  lookup_size = len(get_lookup_code(base,len(bytes),offset,0x8f)) #TODO: Issue with mapping offset & size
+  mapping[len(bytes)+base+1] = offset+lookup_size
   print 'lookup mapping %s:%s'%(hex(lookup_function_offset),hex(newoff+base))
+  print 'mapping mapping %s:%s'%(hex(mapping_offset),hex(newoff+base+1))
   return mapping
 
 def write_mapping(mapping,base,size):
@@ -337,7 +396,9 @@ def gen_newcode(md,bytes,base,mapping):
     except StopIteration:
       newbytes+=bytes[off] #No change, just add byte
     '''
-  #TODO: Right here append the actual code for the lookup function onto the end of newbytes
+  #Append lookup function and then mapping to end of bytes
+  newbytes+=get_lookup_code(base,len(bytes),mapping[lookup_function_offset],mapping[mapping_offset])
+  newbytes+=write_mapping(mapping,base,len(bytes))
   return newbytes
 
 def renable(fname):
@@ -414,6 +475,19 @@ def renable(fname):
         print cache
 	print maptext.encode('hex')
         print '0x%x'%(base+len(bytes))
+	print 'code increase: %d%%'%(((len(newbytes)-len(bytes))/float(len(bytes)))*100)
+        lookup = get_lookup_code(base,len(bytes),mapping[lookup_function_offset],0x8f)
+        print 'lookup w/unknown mapping %s'%len(lookup)
+        insts = md.disasm(lookup,0x0)
+	for ins in insts:
+          print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
+        lookup = get_lookup_code(base,len(bytes),mapping[lookup_function_offset],mapping[mapping_offset])
+        print 'lookup w/known mapping %s'%len(lookup)
+        insts = md.disasm(lookup,0x0)
+	for ins in insts:
+          print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
+        if 0x80482b4 in mapping:
+		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
           
 '''
   with open(fname,'rb') as f:
