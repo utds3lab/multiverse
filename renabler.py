@@ -4,8 +4,10 @@ import capstone
 from capstone.x86 import X86_OP_REG,X86_OP_MEM,X86_OP_IMM
 import sys
 import struct
-from pwn import asm,context
-context(os='linux',arch='i386')
+#from pwn import asm,context
+#context(os='linux',arch='i386')
+from assembler import asm
+import assembler
 import cProfile
 
 #From Brian's Static_phase.py
@@ -243,8 +245,35 @@ def translate_one(ins,mapping):
   else: #Any other instruction
     return None #No translation needs to be done
 
-def brute_force_disasm(md,bytes,base,instoff,maplist):
+def get_instr(md,bytes,instoff,base):
+  return md.disasm(bytes[instoff:instoff+15],base+instoff)#longest x86/x64 instr is 15 bytes
+
+def check(base,instoff,dummymap):
+  off = base+instoff
+  #for m in maplist:
+  if off in dummymap:
+    raise StopIteration
+
+def brute_force_disasm(md,bytes,base,instoff,dummymap):
+  '''insts = md.disasm(bytes[instoff:],base+instoff)
+  instoff = base+instoff
+  for ins in insts:
+    for m in maplist:
+      if instoff in m:
+        raise StopIteration
+    instoff+=len(ins.bytes)
+    yield ins'''
   while instoff < len(bytes):
+    check(base,instoff,dummymap)
+    insts = get_instr(md,bytes,instoff,base)
+    try:
+      ins = insts.next() #May raise StopIteration
+      instoff+=len(ins.bytes)
+      yield ins
+    except StopIteration: #Not a valid instruction
+      instoff+=1
+      yield None
+  '''while instoff < len(bytes):
     in_mapping = False
     for m in maplist:
       if base+instoff in m:
@@ -259,12 +288,13 @@ def brute_force_disasm(md,bytes,base,instoff,maplist):
       yield ins
     except StopIteration: #Not a valid instruction
       instoff+=1
-      yield None
+      yield None'''
 
 def gen_mapping(md,bytes,base):
   mapping = {}
   #Each mapping in maplist holds the length of that instruction (or instructions if patched)
   maplist = []
+  dummymap = {}
   for off in range(0,len(bytes)):
     instoff = off #instruction offset is the offset in this decoding
     newoff = 0 #For each decoding, we have a new offset, starting at 0
@@ -272,7 +302,7 @@ def gen_mapping(md,bytes,base):
     #when we put them together we have the freedom to shuffle their positions
     currmap = {}
     #print "[MAPPING] DOING OFFSET %s"%off
-    for ins in brute_force_disasm(md,bytes,base,off,maplist):
+    for ins in brute_force_disasm(md,bytes,base,off,dummymap):
       if ins is None: #If the instruction was invalid, stop current disassembly
         break
       #print '0x%x:\t%s\t%s'%(ins.address,ins.mnemonic,ins.op_str)
@@ -290,6 +320,7 @@ def gen_mapping(md,bytes,base):
       last = max(currmap.keys())
       currmap[last]+=len(reroute)
       maplist.append(currmap)
+      dummymap.update(currmap)
     '''
     while instoff < len(bytes):
       in_mapping = False
@@ -351,10 +382,11 @@ def gen_newcode(md,bytes,base,mapping):
   newbytes = ''
   bytemap = {}
   maplist = [] #This maplist maps addresses to patched instruction bytes instead of a new address
+  dummymap = {}
   for off in range(0,len(bytes)):
     currmap = {}
     #print "[CODE] DOING OFFSET %s"%off
-    for ins in brute_force_disasm(md,bytes,base,off,maplist):
+    for ins in brute_force_disasm(md,bytes,base,off,dummymap):
       if ins is None: #If the instruction was invalid, stop current disassembly
         break
       #print '0x%x:\t%s\t%s'%(ins.address,ins.mnemonic,ins.op_str)
@@ -381,6 +413,7 @@ def gen_newcode(md,bytes,base,mapping):
         reroute+='\x90\x90\x90' #Add padding of 3 NOPs
       currmap[last]+=reroute #add bytes of unconditional jump
       maplist.append(currmap)
+      dummymap.update(currmap)
   for m in maplist: #For each code mapping, in order of discovery
     for k in sorted(m.keys()): #For each original address to code, in order of original address
       newbytes+=m[k]
@@ -529,7 +562,7 @@ def renable(fname):
 
 if __name__ == '__main__':
   if len(sys.argv) == 2:
-    renable(sys.argv[1])
-    #cProfile.run('renable(sys.argv[1])')
+    #renable(sys.argv[1])
+    cProfile.run('renable(sys.argv[1])')
   else:
     print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]
