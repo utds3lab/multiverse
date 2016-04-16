@@ -26,18 +26,18 @@ def asm(text):
     for line in text.split('\n'):
       match = pat.search(line)
       if match and match.group() != '$+0x8f':
-        print 'ORIGINAL: %s'%line
-        print 'MATCH %s'%match.group()
+        #print 'ORIGINAL: %s'%line
+        #print 'MATCH %s'%match.group()
         off = int(match.group()[2:],16)
-        print 'offset %x'%off
+        #print 'offset %x'%off
         line = line.strip()
         mnemonic = line[:line.find(' ')]
-        print 'mnemonic %s'%mnemonic
+        #print 'mnemonic %s'%mnemonic
         #before = _asm(line)
         #print 'BEFORE: %s'%before.encode('hex')
         line = pat.sub('$+0x8f',line) #Replace actual offset with dummy
         newcode = _asm(line) #Assembled code with dummy offset
-        print 'DUMMY: %s'%newcode.encode('hex')
+        #print 'DUMMY: %s'%newcode.encode('hex')
         if mnemonic in ['jmp','call']:
           off-=5 #Subtract 5 because the large encoding knows it's 5 bytes long
           newcode = newcode[0]+struct.pack('<i',off) #Signed int for negative jumps 
@@ -47,7 +47,7 @@ def asm(text):
           #if off < 0:
           #  print 'AFTER: %s'%newcode.encode('hex')
           #  raise Exception
-        print 'AFTER: %s'%newcode.encode('hex')
+        #print 'AFTER: %s'%newcode.encode('hex')
         #if before != newcode and len(before) != 2:
         #  raise Exception
         code+=newcode

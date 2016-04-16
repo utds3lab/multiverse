@@ -9,6 +9,8 @@ import struct
 from assembler import asm
 import assembler
 import cProfile
+import bin_write
+import json
 
 #From Brian's Static_phase.py
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -82,7 +84,7 @@ def get_plt_entry(target):
 def get_callback_code(ins,mapping,name):
   print 'call with callback found'
   #TODO: Why -12?  Is this general?
-  save_eax = save_reg_template%('-12','eax')
+  save_eax = save_reg_template%('-16','eax')
   callback_template_before = '''
   mov eax, [esp+(%s*4)]'''
   callback_template_after = '''
@@ -97,29 +99,29 @@ def get_callback_code(ins,mapping,name):
     lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
     cb_after = callback_template_after%(lookup_target,ind)
     code+=asm(cb_after)
-  restore_eax = restore_reg_template%('eax','-12')
+  restore_eax = restore_reg_template%('eax','-16')
   code+=asm(restore_eax)
   return code
 
 def get_direct_uncond_code(ins,mapping,target):
-  #save_eax = save_reg_template%('-12','eax')
+  #save_eax = save_reg_template%('-16','eax')
   #code:
   '''
-  mov [esp-12], eax	;save old eax value
+  mov [esp-16], eax	;save old eax value
   mov eax, %s		;read location in memory from which we will get destination
   call $+%s		;call lookup function
   mov [esp-4], eax	;save new eax value (destination mapping)
-  mov eax, [esp-12]	;restore old eax value
+  mov eax, [esp-16]	;restore old eax value
   %s [esp-4]		;jmp/call to new address
   '''
   template_before = '''
-  mov [esp-12], eax
+  mov [esp-16], eax
   mov eax, %s
   '''
   template_after = '''
   call $+%s
   mov [esp-4], eax
-  mov eax, [esp-12]
+  mov eax, [esp-16]
   %s [esp-4]
   '''
   code = asm(template_before%(target))
@@ -498,15 +500,15 @@ def renable(fname):
         #and the start of the next plt entry, now there are 4 bytes from the rest of the jmp.
         #This is a good example of why I need to take a different approach to generating the mapping.
         #insts = md.disasm(newbytes[0x80483af-seg.header['p_vaddr']:0x80483bf-seg.header['p_vaddr']],0x80483af)
-        insts = md.disasm(newbytes,0x8048000)
-        for ins in insts:
-          print '0x%x:\t%s\t%s'%(ins.address,ins.mnemonic,ins.op_str)
-        tmpdct = {hex(k): (lambda x:hex(x+seg.header['p_vaddr']))(v) for k,v in mapping.items()}
-        keys = tmpdct.keys()
-        keys.sort()
-        output = ''
-        for key in keys:
-          output+='%s:%s '%(key,tmpdct[key])
+        #insts = md.disasm(newbytes,0x8048000)
+        #for ins in insts:
+        #  print '0x%x:\t%s\t%s'%(ins.address,ins.mnemonic,ins.op_str)
+        #tmpdct = {hex(k): (lambda x:hex(x+seg.header['p_vaddr']))(v) for k,v in mapping.items()}
+        #keys = tmpdct.keys()
+        #keys.sort()
+        #output = ''
+        #for key in keys:
+        #  output+='%s:%s '%(key,tmpdct[key])
         with open('newbytes','wb') as f2:
           f2.write(newbytes)
         #print output
@@ -533,7 +535,13 @@ def renable(fname):
           print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
         if 0x80482b4 in mapping:
 		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
+        if 0x804ac40 in mapping:
+		print 'bzip2 only: snocString at 0x%x'%mapping[0x804ac40]
         print 'entry point: %x'%mapping[entry]
+        newbase = 0x09000000
+        with open('mapdump.json','wb') as f:
+          json.dump(mapping,f)
+        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
           
 '''
   with open(fname,'rb') as f:
@@ -562,7 +570,7 @@ def renable(fname):
 
 if __name__ == '__main__':
   if len(sys.argv) == 2:
-    #renable(sys.argv[1])
-    cProfile.run('renable(sys.argv[1])')
+    renable(sys.argv[1])
+    #cProfile.run('renable(sys.argv[1])')
   else:
     print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]
