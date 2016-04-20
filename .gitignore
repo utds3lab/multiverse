@@ -3,3 +3,4 @@ nolibc
 teeny
 *.o
 .*
+*.pyc

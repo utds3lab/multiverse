@@ -61,8 +61,8 @@ def remap_target(addr,mapping,target,offs): #Only works for statically identifia
   if mapping is not None and target in mapping:#Second pass, known mapping
     newtarget = mapping[target]-(mapping[addr]+offs) #Offset from curr location in mapping
     newtarget = hex(newtarget)
-    print "original target: %s"%hex(target)
-    print "%s-(%s+%s) = %s"%(hex(mapping[target]),hex(mapping[addr]),hex(offs),newtarget)
+    #print "original target: %s"%hex(target)
+    #print "%s-(%s+%s) = %s"%(hex(mapping[target]),hex(mapping[addr]),hex(offs),newtarget)
   return newtarget
 
 def in_plt(target):
@@ -110,9 +110,10 @@ def get_direct_uncond_code(ins,mapping,target):
   mov [esp-16], eax	;save old eax value
   mov eax, %s		;read location in memory from which we will get destination
   call $+%s		;call lookup function
-  mov [esp-4], eax	;save new eax value (destination mapping)
+  mov [esp-8], eax	;save new eax value (destination mapping)
   mov eax, [esp-16]	;restore old eax value
-  %s [esp-4]		;jmp/call to new address
+  %s			;if a call, we push return address here
+  %s [esp-%s]		;jmp/call to new address (offset depends on whether we pushed a return address)
   '''
   template_before = '''
   mov [esp-16], eax
@@ -120,14 +121,23 @@ def get_direct_uncond_code(ins,mapping,target):
   '''
   template_after = '''
   call $+%s
-  mov [esp-4], eax
+  mov [esp-8], eax
   mov eax, [esp-16]
-  %s [esp-4]
+  %s
+  jmp [esp-%s]
   '''
   code = asm(template_before%(target))
   size = len(code)
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
-  code+=asm(template_after%(lookup_target,ins.mnemonic))
+  #Always transform an unconditional control transfer to a jmp, but
+  #for a call, insert a push instruction to push the original return address on the stack.
+  #At runtime, our rewritten ret will look up the right address to return to and jmp there.
+  #If we insert a call and push the return address on the stack, the destination address
+  #is only 4 bytes above the stack.  Otherwise it remains 8 bytes, as it was when we saved it.
+  if ins.mnemonic == 'call':
+    code+=asm(template_after%(lookup_target,'push %s'%(ins.address+len(ins.bytes)),4))
+  else:  
+    code+=asm(template_after%(lookup_target,'',8))
   return code
 
 def get_lookup_code(base,size,lookup_off,mapping_off):
@@ -196,25 +206,28 @@ def translate_uncond(ins,mapping):
   elif op.type == X86_OP_IMM: # e.g. call 0xdeadbeef or jmp 0xcafebada
     target = op.imm
     callback_code = b'' #If this ends up not being a plt call with callbacks, add no code
-    if get_pc_thunk is not None and target == get_pc_thunk: #Special case for calls to thunk
-      print 'Found call to get_pc_thunk at 0x%x'%ins.address
-      thunk_ret = ins.address+len(ins.bytes) #Address directly after call instruction
-      #Replace the call with a mov instruction setting ebx to what WOULD have been the
-      #result in the original code, assuming that the original code is in its original place.
-      return asm('mov ebx,%s'%thunk_ret)
+    #if get_pc_thunk is not None and target == get_pc_thunk: #Special case for calls to thunk
+    #  print 'Found call to get_pc_thunk at 0x%x'%ins.address
+    #  thunk_ret = ins.address+len(ins.bytes) #Address directly after call instruction
+    #  #Replace the call with a mov instruction setting ebx to what WOULD have been the
+    #  #result in the original code, assuming that the original code is in its original place.
+    #  return asm('mov ebx,%s'%thunk_ret)
     if in_plt(target):
       print 'plt found @%s: %s %s'%(hex(ins.address),ins.mnemonic,ins.op_str)
       entry = get_plt_entry(target)
       if entry is not None and entry in callbacks.keys():
         callback_code = get_callback_code(ins,mapping,entry)
+    if ins.mnemonic == 'call': #If it's a call, push the original address of the next instruction
+      #TODO: eventually get rid of callback checks and rename this (eventually we will modify all libs).
+      callback_code += asm('push %s'%(ins.address+len(ins.bytes)))
     newtarget = remap_target(ins.address,mapping,target,len(callback_code))
-    print "(pre)new length: %s"%len(callback_code)
-    print "target: %s"%hex(target)
-    print "newtarget: %s"%newtarget
-    patched = asm(ins.mnemonic + ' $+' + newtarget)
+    #print "(pre)new length: %s"%len(callback_code)
+    #print "target: %s"%hex(target)
+    #print "newtarget: %s"%newtarget
+    patched = asm('jmp $+%s'%newtarget)
     if len(patched) == 2: #Short encoding, which we do not want
       patched+='\x90\x90\x90' #Add padding of 3 NOPs
-    print "new length: %s"%len(callback_code+patched)
+    #print "new length: %s"%len(callback_code+patched)
     return callback_code+patched
   return None
 
@@ -239,11 +252,41 @@ def translate_cond(ins,mapping):
     #print "(cond)new length: %s"%len(patched)
     return patched
 
+def translate_ret(ins,mapping):
+  '''
+  mov [esp-12], eax	;save old eax value
+  pop eax		;pop address from stack from which we will get destination
+  call $+%s		;call lookup function
+  mov [esp-4], eax	;save new eax value (destination mapping)
+  mov eax, [esp-16]	;restore old eax value (the pop has shifted our stack so we must look at 12+4=16)
+  jmp [esp-4]		;jmp/call to new address
+  '''
+  template_before = '''
+  mov [esp-12], eax
+  pop eax
+  '''
+  template_after = '''
+  call $+%s
+  mov [esp-4], eax
+  mov eax, [esp-16]
+  jmp [esp-4]
+  '''
+  code = asm(template_before)
+  size = len(code)
+  lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
+  code+=asm(template_after%(lookup_target))
+  return code
+
 def translate_one(ins,mapping):
   if ins.mnemonic in ['call','jmp']: #Unconditional jump
     return translate_uncond(ins,mapping)
   elif ins.mnemonic in JCC: #Conditional jump
     return translate_cond(ins,mapping)
+  elif ins.mnemonic == 'ret':
+    #TODO: rets with immediate
+    return translate_ret(ins,mapping)
+  elif ins.mnemonic in ['retn','retf','repz']: #I think retn is not used in Capstone
+    print 'Warning: unimplemented %s %s'%(ins.mnemonic,ins.op_str)
   else: #Any other instruction
     return None #No translation needs to be done
 
@@ -395,10 +438,10 @@ def gen_newcode(md,bytes,base,mapping):
       newins = translate_one(ins,mapping) #In this pass, the mapping is incomplete
       if newins is not None:
         tmps = md.disasm(newins,base+mapping[ins.address])
-        print 'address: %x off: %x mapping[addr]: %x'%(ins.address,off,mapping[ins.address])
-        for tmp in tmps:
-          print '0x%x(0x%x):\t%s\t%s'%(tmp.address,ins.address,tmp.mnemonic,tmp.op_str)
-        print '---'
+        #print 'address: %x off: %x mapping[addr]: %x'%(ins.address,off,mapping[ins.address])
+        #for tmp in tmps:
+        #  print '0x%x(0x%x):\t%s\t%s'%(tmp.address,ins.address,tmp.mnemonic,tmp.op_str)
+        #print '---'
         currmap[ins.address] = newins #Old address maps to these new instructions
       else:
         currmap[ins.address] = str(ins.bytes) #This instruction is unchanged, and its old address maps to it
