@@ -126,6 +126,7 @@ def get_direct_uncond_code(ins,mapping,target):
   %s
   jmp [esp-%s]
   '''
+  #TODO: This is somehow still the bottleneck, so this needs to be optimized
   code = asm(template_before%(target))
   size = len(code)
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
@@ -213,7 +214,7 @@ def translate_uncond(ins,mapping):
     #  #result in the original code, assuming that the original code is in its original place.
     #  return asm('mov ebx,%s'%thunk_ret)
     if in_plt(target):
-      print 'plt found @%s: %s %s'%(hex(ins.address),ins.mnemonic,ins.op_str)
+      #print 'plt found @%s: %s %s'%(hex(ins.address),ins.mnemonic,ins.op_str)
       entry = get_plt_entry(target)
       if entry is not None and entry in callbacks.keys():
         callback_code = get_callback_code(ins,mapping,entry)
@@ -242,7 +243,7 @@ def translate_cond(ins,mapping):
     #print ins.operands
     target = ins.operands[0].imm # int(ins.op_str,16) The destination of this instruction
     newtarget = remap_target(ins.address,mapping,target,0)
-    print "target: %x remapped target: %s"%(target,newtarget)
+    #print "target: %x remapped target: %s"%(target,newtarget)
     patched = asm(ins.mnemonic + ' $+' + newtarget)
     #TODO: some instructions encode to 6 bytes, some to 5, some to 2.  How do we know which?
     #For example, for CALL, it seems to only be 5 or 2 depending on offset.
@@ -286,7 +287,7 @@ def translate_one(ins,mapping):
     #TODO: rets with immediate
     return translate_ret(ins,mapping)
   elif ins.mnemonic in ['retn','retf','repz']: #I think retn is not used in Capstone
-    print 'Warning: unimplemented %s %s'%(ins.mnemonic,ins.op_str)
+    print 'WARNING: unimplemented %s %s'%(ins.mnemonic,ins.op_str)
   else: #Any other instruction
     return None #No translation needs to be done
 
@@ -336,11 +337,15 @@ def brute_force_disasm(md,bytes,base,instoff,dummymap):
       yield None'''
 
 def gen_mapping(md,bytes,base):
+  print 'Generating mapping...'
+  ten_percent = len(bytes)/10
   mapping = {}
   #Each mapping in maplist holds the length of that instruction (or instructions if patched)
   maplist = []
   dummymap = {}
   for off in range(0,len(bytes)):
+    if off%ten_percent == 0:
+      print 'Mapping %d%% complete...'%((off/ten_percent)*10)
     instoff = off #instruction offset is the offset in this decoding
     newoff = 0 #For each decoding, we have a new offset, starting at 0
     #Each mapping in maplist has offset from wherever it starts, so
@@ -418,17 +423,21 @@ def write_mapping(mapping,base,size):
     if addr in mapping:
       bytes+=struct.pack('<I',mapping[addr]) #Write our offset in little endian
     else:
-      print 'No mapping for 0x%x'%addr
+      #print 'No mapping for 0x%x'%addr
       bytes+=struct.pack('<I',0xffffffff) #Write an invalid offset if not in mapping
-  print 'last address was 0x%x'%(base+size)
+  print 'last address in mapping was 0x%x'%(base+size)
   return bytes
 
 def gen_newcode(md,bytes,base,mapping):
+  print 'Generating new code...'
+  ten_percent = len(bytes)/10
   newbytes = ''
   bytemap = {}
   maplist = [] #This maplist maps addresses to patched instruction bytes instead of a new address
   dummymap = {}
   for off in range(0,len(bytes)):
+    if off%ten_percent == 0:
+      print 'Code generation %d%% complete...'%((off/ten_percent)*10)
     currmap = {}
     #print "[CODE] DOING OFFSET %s"%off
     for ins in brute_force_disasm(md,bytes,base,off,dummymap):
@@ -552,7 +561,7 @@ def renable(fname):
         #output = ''
         #for key in keys:
         #  output+='%s:%s '%(key,tmpdct[key])
-        with open('newbytes','wb') as f2:
+        '''with open('newbytes','wb') as f2:
           f2.write(newbytes)
         #print output
         print mapping[base]
@@ -584,7 +593,7 @@ def renable(fname):
         newbase = 0x09000000
         with open('mapdump.json','wb') as f:
           json.dump(mapping,f)
-        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
+        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])'''
           
 '''
   with open(fname,'rb') as f:
@@ -613,7 +622,7 @@ def renable(fname):
 
 if __name__ == '__main__':
   if len(sys.argv) == 2:
-    renable(sys.argv[1])
-    #cProfile.run('renable(sys.argv[1])')
+    #renable(sys.argv[1])
+    cProfile.run('renable(sys.argv[1])')
   else:
     print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]

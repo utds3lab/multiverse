@@ -5,6 +5,8 @@ import struct
 
 cache = {}
 pat = re.compile('\$\+[-]?0x[0-9a-f]+')
+pat2 = re.compile('[ ]*push [0-9]+[ ]*')
+pat3 = re.compile('mov eax, dword ptr \[0x[0-9a-f]+\]')
 
 #jcxz and jecxz are removed because they don't have a large expansion
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -52,9 +54,27 @@ def asm(text):
         #  raise Exception
         code+=newcode
         #raise Exception
+      elif pat2.match(line):
+        #print 'push 02'
+        code+=b'\x68' + struct.pack('<I',int(line.strip().split(' ')[1]) ) #push case
       else:
         code+=_asm(line)
     return code
+  elif pat2.match(text):
+    #print 'push 01'
+    #since this is always the push instruction, there really is no need to call pwn.asm at all.
+    return b'\x68' + struct.pack('<I',int(text.strip().split(' ')[1]) )
+    #print str(pwn.asm(text)).encode('hex')
+    #print str(pwn.asm('push 0x8f')).encode('hex')
+  #TODO: use this for optimizations, but also include other instructions outside of match
+  #match = pat3.search(text)
+  #if match:
+  #  inst = match.group()
+  #  return b'\xa1' + struct.pack('<I',int(inst[inst.find('[')+1:-1],16) ) #mov eax, dword ptr [0xcafecafe]
+  #  #print str(pwn.asm(inst)).encode('hex')
+  #  #print str(pwn.asm('mov eax, dword ptr [0x8f]')).encode('hex')
+  #  #print hex(int(inst[inst.find('[')+1:-1],16))
+  #  #print (  b'\xa1' + struct.pack('<I',int(inst[inst.find('[')+1:-1],16) )   ).encode('hex')
     '''matches = pat.finditer(text)
     start = 0
     for m in matches:
