@@ -6,7 +6,9 @@ import struct
 cache = {}
 pat = re.compile('\$\+[-]?0x[0-9a-f]+')
 pat2 = re.compile('[ ]*push [0-9]+[ ]*')
-pat3 = re.compile('mov eax, dword ptr \[0x[0-9a-f]+\]')
+pat3 = re.compile('[ ]*mov eax, (d)?word ptr \[0x[0-9a-f]+\][ ]*')
+pat4 = re.compile('[ ]*mov eax, dword ptr \[e[a-z][a-z] [+-] (0x)?[0-9a-f]+\][ ]*')
+pat5 = re.compile('(0x[0-9a-f]+|[0-9])')
 
 #jcxz and jecxz are removed because they don't have a large expansion
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -18,11 +20,77 @@ def _asm(text):
   if text in cache:
     return cache[text]
   else:
+    #with open('uncached.txt','a') as f:
+    #  f.write(text+'\n')
     code = pwn.asm(text)
     cache[text] = code
     return code
 
 def asm(text):
+  code = b''
+  for line in text.split('\n'):
+    #Check for offsets ($+)
+    match = pat.search(line)
+    if match and match.group() != '$+0x8f':
+      off = int(match.group()[2:],16)
+      line = line.strip()
+      mnemonic = line[:line.find(' ')]
+      line = pat.sub('$+0x8f',line) #Replace actual offset with dummy
+      newcode = _asm(line) #Assembled code with dummy offset
+      if mnemonic in ['jmp','call']:
+        off-=5 #Subtract 5 because the large encoding knows it's 5 bytes long
+        newcode = newcode[0]+struct.pack('<i',off) #Signed int for negative jumps 
+      elif mnemonic in JCC:
+        off-=6 #Subtract 6 because the large encoding knows it's 6 bytes long
+        newcode = newcode[0:2]+struct.pack('<i',off) #Signed int for negative jumps
+      code+=newcode
+    #Check for push instruction
+    elif pat2.match(line):
+      code+=b'\x68' + struct.pack('<I',int(line.strip().split(' ')[1]) ) #push case
+    #Check for mov instruction to eax from immediate
+    elif pat3.match(line):
+      #mov eax, dword ptr [0xcafecafe]
+      if ' word' in line:
+        print 'WARNING: silently converting "mov eax, word ptr [<number>]" to "mov eax, dword ptr [<number]"'
+      code+=b'\xa1' + struct.pack('<I',int(line[line.find('[')+1:line.find(']')],16) )
+    #Check for mov instruction to eax from some register plus or minus an offset
+    elif pat4.match(line):
+      #f = open('crazyq.txt','a')
+      #f.write(line+'\n')
+      #ocode = pwn.asm(line)
+      #f.write(str(ocode).encode('hex')+'\n')
+      original = int(pat5.search(line).group(),16)
+      if '-' in line:
+        original=-original
+      if abs(original) > 0x7f:
+        line = pat5.sub('0x8f',line)
+        original = struct.pack('<i',original)
+      else:
+        line = pat5.sub('0x7f',line)
+        original = struct.pack('<b',original)
+      newcode = _asm(line)
+      #f.write(str(newcode).encode('hex')+'\n')
+      newcode = newcode[0:2]+original
+      #f.write(str(newcode).encode('hex')+'\n')
+      #if newcode != ocode:
+      #  raise Exception
+      #f.close() 
+      code+=newcode
+    else:
+        code+=_asm(line)
+  return code
+
+def oldasm(text):
+  if 'mov [esp-16], eax\n  mov eax, ' in text:
+    print text
+    if not pat3.search(text):
+      print str(pwn.asm(text)).encode('hex')
+      text2 = '''
+  mov [esp-16], eax
+  mov eax, dword ptr [eax*4 + 0x80597bc]
+'''
+      print str(pwn.asm(text2)).encode('hex')
+      raise Exception
   if '$+' in text:
     code = b''
     for line in text.split('\n'):
@@ -67,14 +135,16 @@ def asm(text):
     #print str(pwn.asm(text)).encode('hex')
     #print str(pwn.asm('push 0x8f')).encode('hex')
   #TODO: use this for optimizations, but also include other instructions outside of match
-  #match = pat3.search(text)
-  #if match:
-  #  inst = match.group()
-  #  return b'\xa1' + struct.pack('<I',int(inst[inst.find('[')+1:-1],16) ) #mov eax, dword ptr [0xcafecafe]
-  #  #print str(pwn.asm(inst)).encode('hex')
-  #  #print str(pwn.asm('mov eax, dword ptr [0x8f]')).encode('hex')
-  #  #print hex(int(inst[inst.find('[')+1:-1],16))
-  #  #print (  b'\xa1' + struct.pack('<I',int(inst[inst.find('[')+1:-1],16) )   ).encode('hex')
+  match = pat3.search(text)
+  if match:
+    print 'MATCHED %s'%match.group()
+    inst = match.group()
+    
+    print str(pwn.asm(inst)).encode('hex')
+    print str(pwn.asm('mov eax, dword ptr [0x8f]')).encode('hex')
+    #print hex(int(inst[inst.find('[')+1:-1],16))
+    print (  b'\xa1' + struct.pack('<I',int(inst[inst.find('[')+1:-1],16) )   ).encode('hex')
+    return b'\xa1' + struct.pack('<I',int(inst[inst.find('[')+1:-1],16) ) #mov eax, dword ptr [0xcafecafe]
     '''matches = pat.finditer(text)
     start = 0
     for m in matches:

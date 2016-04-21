@@ -6,7 +6,7 @@ import sys
 import struct
 #from pwn import asm,context
 #context(os='linux',arch='i386')
-from assembler import asm
+from assembler import asm,_asm
 import assembler
 import cProfile
 import bin_write
@@ -128,6 +128,7 @@ def get_direct_uncond_code(ins,mapping,target):
   '''
   #TODO: This is somehow still the bottleneck, so this needs to be optimized
   code = asm(template_before%(target))
+  #code = b''
   size = len(code)
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
   #Always transform an unconditional control transfer to a jmp, but
@@ -194,7 +195,7 @@ def get_lookup_code(base,size,lookup_off,mapping_off):
 	hlt
   '''
   #retrieve eip 8 bytes after start of lookup function
-  return asm(lookup_template%(lookup_off+8,base,size,mapping_off,base)) 
+  return _asm(lookup_template%(lookup_off+8,base,size,mapping_off,base)) 
 
 def translate_uncond(ins,mapping):
   op = ins.operands[0] #Get operand
@@ -529,8 +530,9 @@ def renable(fname):
       for rel in relplt.iter_relocations():
         got_off = rel['r_offset'] #Get GOT offset address for this entry
         ds_ent = ELF32_R_SYM(rel['r_info']) #Get offset into dynamic symbol table
-        name = dynsym.get_symbol(ds_ent).name #Get name of symbol
-        plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
+        if dynsym:
+          name = dynsym.get_symbol(ds_ent).name #Get name of symbol
+          plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
     else:
         print 'binary does not contain plt'
     print plt
@@ -561,7 +563,7 @@ def renable(fname):
         #output = ''
         #for key in keys:
         #  output+='%s:%s '%(key,tmpdct[key])
-        '''with open('newbytes','wb') as f2:
+        with open('newbytes','wb') as f2:
           f2.write(newbytes)
         #print output
         print mapping[base]
@@ -593,7 +595,7 @@ def renable(fname):
         newbase = 0x09000000
         with open('mapdump.json','wb') as f:
           json.dump(mapping,f)
-        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])'''
+        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
           
 '''
   with open(fname,'rb') as f:
@@ -622,7 +624,7 @@ def renable(fname):
 
 if __name__ == '__main__':
   if len(sys.argv) == 2:
-    #renable(sys.argv[1])
-    cProfile.run('renable(sys.argv[1])')
+    renable(sys.argv[1])
+    #cProfile.run('renable(sys.argv[1])')
   else:
     print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]
