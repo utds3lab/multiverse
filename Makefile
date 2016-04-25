@@ -1,5 +1,5 @@
 
-all: teeny steeny nolibc eip mem lookup simplest ssimplest
+all: teeny steeny nolibc eip mem lookup simplest ssimplest usevec auxvec
 
 teeny: 
 	nasm -f elf teeny.asm
@@ -34,5 +34,15 @@ simplest: simplest.o
 ssimplest: simplest.o
 	gcc -o ssimplest -Wall -m32 -static simplest.o
 
+libvector.so:
+	gcc -m32 -shared -fPIC -Wall -o libvector.so addvec.c multvec.c
+
+usevec: libvector.so
+	gcc -m32 -Wall -o usevec usevec.c ./$<
+
+auxvec:
+	nasm -f elf auxvec.asm
+	gcc -o auxvec -Wall -m32 -s -nostartfiles auxvec.o
+
 clean:
-	rm -f teeny.o teeny steeny nolibc.o nolibc eip.o eip mem.o mem lookup.o lookup simplest.o simplest ssimplest
+	rm -f teeny.o teeny steeny nolibc.o nolibc eip.o eip mem.o mem lookup.o lookup simplest.o simplest ssimplest libvector.so usevec auxvec.o auxvec
