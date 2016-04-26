@@ -7,7 +7,7 @@ cache = {}
 pat = re.compile('\$\+[-]?0x[0-9a-f]+')
 pat2 = re.compile('[ ]*push [0-9]+[ ]*')
 pat3 = re.compile('[ ]*mov eax, (d)?word ptr \[0x[0-9a-f]+\][ ]*')
-pat4 = re.compile('[ ]*mov eax, dword ptr \[e[a-z][a-z] [+-] (0x)?[0-9a-f]+\][ ]*')
+pat4 = re.compile('[ ]*mov eax, dword ptr \[e[a-z]x [+-] (0x)?[0-9a-f]+\][ ]*')
 pat5 = re.compile('(0x[0-9a-f]+|[0-9])')
 
 #jcxz and jecxz are removed because they don't have a large expansion
@@ -54,6 +54,9 @@ def asm(text):
         print 'WARNING: silently converting "mov eax, word ptr [<number>]" to "mov eax, dword ptr [<number]"'
       code+=b'\xa1' + struct.pack('<I',int(line[line.find('[')+1:line.find(']')],16) )
     #Check for mov instruction to eax from some register plus or minus an offset
+    #NOTE: This does NOT WORK for esp!  The instruction encoding pattern is DIFFERENT!
+    #To handle this, right now this will only replace e[a-z]x registers, although it 
+    #seems as if esi,edi, or ebp would also work.
     elif pat4.match(line):
       #f = open('crazyq.txt','a')
       #f.write(line+'\n')

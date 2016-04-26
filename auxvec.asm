@@ -5,11 +5,11 @@ GLOBAL _start
 SECTION .text
 _start:
 getsysinfo:
-	mov [esp-4],esi		;I think there's no need to save these, but in case somehow 
-	mov [esp-8],ecx		;the dynamic linker leaves something of interest for _start, we can save them
-	mov esi,[esp]
-	mov ecx,esp
-	lea ecx,[ecx+esi*4+4]
+	mov [esp-4],esi		;I think there's no need to save these, but in case somehow the
+	mov [esp-8],ecx		;dynamic linker leaves something of interest for _start, we can save them
+	mov esi,[esp]		;Retrieve argc
+	mov ecx,esp		;Retrieve address of argc
+	lea ecx,[ecx+esi*4+4]	;Skip argv
 ;	add ecx,4
 ;	test esi,esi		;Check for zero args
 ;	jz loopenv
@@ -19,22 +19,22 @@ getsysinfo:
 ;	test esi,esi
 ;	jnz loopargv
 loopenv:			;Iterate through each environment variable
-	add ecx,4
-	mov esi,[ecx]
-	test esi,esi
-	jnz loopenv
+	add ecx,4		;The first loop skips over the NULL after argv
+	mov esi,[ecx]		;Retrieve environment variable
+	test esi,esi		;Check whether it is NULL
+	jnz loopenv		;If not, continue through environment vars
 	add ecx,4		;Hop over 0 byte to first entry
 loopaux:			;Iterate through auxiliary vector, looking for AT_SYSINFO (32)
-	mov esi,[ecx]
-	cmp esi,32
-	jz foundsysinfo
-	test esi,esi
+	mov esi,[ecx]		;Retrieve the type field of this entry
+	cmp esi,32		;Compare to 32, the entry we want
+	jz foundsysinfo		;Found it
+	test esi,esi		;Check whether we found the entry signifying the end of auxv
 	jz restore		;Go to _start if we reach the end
-	add ecx,8		;Each entry is 8 bytes
+	add ecx,8		;Each entry is 8 bytes; go to next
 	jmp loopaux
 foundsysinfo:
-	mov esi,[ecx+4]
-	mov [sysinfo],esi
+	mov esi,[ecx+4]		;Retrieve sysinfo address
+	mov [sysinfo],esi	;Save address
 restore:
 	mov esi,[esp-4]
 	mov ecx,[esp-8]

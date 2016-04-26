@@ -46,6 +46,9 @@ plt = {}
 #TODO: Set actual address of function
 lookup_function_offset = 0x8f
 mapping_offset = 0x8f
+global_sysinfo = 0x8f	#Address containing sysinfo's address
+global_lookup = 0x8f	#Address containing global lookup function
+new_entry_off = 0x8f
 get_pc_thunk = None
 #List of library functions that have callback args; each function in the dict has a list of
 #the arguments passed to it that are a callback (measured as the index of which argument it is)
@@ -104,42 +107,46 @@ def get_callback_code(ins,mapping,name):
   return code
 
 def get_direct_uncond_code(ins,mapping,target):
-  #save_eax = save_reg_template%('-16','eax')
-  #code:
+  #Commented assembly
   '''
-  mov [esp-16], eax	;save old eax value
+  mov [esp-28], eax	;save old eax value (very far above the stack because of future push/call)
   mov eax, %s		;read location in memory from which we will get destination
-  call $+%s		;call lookup function
-  mov [esp-8], eax	;save new eax value (destination mapping)
-  mov eax, [esp-16]	;restore old eax value
   %s			;if a call, we push return address here
-  %s [esp-%s]		;jmp/call to new address (offset depends on whether we pushed a return address)
+  call $+%s		;call lookup function
+  mov [esp-4], eax	;save new eax value (destination mapping)
+  mov eax, [esp-%s]	;restore old eax value (offset depends on whether return address pushed)
+  jmp [esp-4]		;jmp to new address
   '''
   template_before = '''
-  mov [esp-16], eax
+  mov [esp-28], eax
   mov eax, %s
+  %s
   '''
   template_after = '''
   call $+%s
-  mov [esp-8], eax
-  mov eax, [esp-16]
-  %s
-  jmp [esp-%s]
+  mov [esp-4], eax
+  mov eax, [esp-%s]
+  jmp [esp-4]
   '''
   #TODO: This is somehow still the bottleneck, so this needs to be optimized
-  code = asm(template_before%(target))
-  #code = b''
+  code = b''
+  if ins.mnemonic == 'call':
+    code = asm(template_before%(target,'push %s'%(ins.address+len(ins.bytes)) ))
+  else:
+    code = asm(template_before%(target,''))
   size = len(code)
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
   #Always transform an unconditional control transfer to a jmp, but
   #for a call, insert a push instruction to push the original return address on the stack.
   #At runtime, our rewritten ret will look up the right address to return to and jmp there.
-  #If we insert a call and push the return address on the stack, the destination address
-  #is only 4 bytes above the stack.  Otherwise it remains 8 bytes, as it was when we saved it.
+  #If we push a value on the stack, we have to store even FURTHER away from the stack.
+  #Note that calling the lookup function can move the stack pointer temporarily up to
+  #20 bytes, which will obliterate anything stored too close to the stack pointer.  That, plus
+  #the return value we push on the stack, means we need to put it at least 28 bytes away.
   if ins.mnemonic == 'call':
-    code+=asm(template_after%(lookup_target,'push %s'%(ins.address+len(ins.bytes)),4))
+    code+=asm(template_after%(lookup_target,24))
   else:  
-    code+=asm(template_after%(lookup_target,'',8))
+    code+=asm(template_after%(lookup_target,28))
   return code
 
 def get_lookup_code(base,size,lookup_off,mapping_off):
@@ -165,7 +172,7 @@ def get_lookup_code(base,size,lookup_off,mapping_off):
 	add edx,0x8048000	;Undo subtraction of base, giving us the originally requested address
 	mov eax,edx		;Place the original request back in eax
 	pop edx
-	ret
+	jmp global_lookup	;Check if global lookup can find this
   failure:
 	hlt
   '''
@@ -190,12 +197,93 @@ def get_lookup_code(base,size,lookup_off,mapping_off):
 	add edx,%s
 	mov eax,edx
 	pop edx
-	ret
+	mov DWORD PTR [esp-32],%s
+  	jmp [esp-32]
   failure:
 	hlt
   '''
   #retrieve eip 8 bytes after start of lookup function
-  return _asm(lookup_template%(lookup_off+8,base,size,mapping_off,base)) 
+  return _asm(lookup_template%(lookup_off+8,base,size,mapping_off,base,global_lookup))
+
+def get_global_lookup_code(lookup_off):
+  global_lookup_template = '''
+  	cmp eax,[%s]
+  	jz sysinfo
+  	ret
+  sysinfo:
+  	push eax
+  	mov eax,[esp+8]
+  	mov DWORD PTR [esp-32],%s
+  	call [esp-32]
+  	mov [esp+8],eax
+  	pop eax
+	ret
+  '''
+  #This is a dreadful workaround hack at the moment.  We hard code a single lookup function.
+  #TODO: code a full global lookup implementation that somehow can find all local lookup functions
+  return _asm(global_lookup_template%(global_sysinfo,0x9000000+lookup_off))
+
+def get_auxvec_code(entry):
+  #Example assembly for searching the auxiliary vector
+  '''
+	mov [esp-4],esi		;I think there's no need to save these, but in case somehow the
+	mov [esp-8],ecx		;linker leaves something of interest for _start, let's save them
+	mov esi,[esp]		;Retrieve argc
+	mov ecx,esp		;Retrieve address of argc
+	lea ecx,[ecx+esi*4+4]	;Skip argv
+  loopenv:			;Iterate through each environment variable
+	add ecx,4		;The first loop skips over the NULL after argv
+	mov esi,[ecx]		;Retrieve environment variable
+	test esi,esi		;Check whether it is NULL
+	jnz loopenv		;If not, continue through environment vars
+	add ecx,4		;Hop over 0 byte to first entry
+  loopaux:			;Iterate through auxiliary vector, looking for AT_SYSINFO (32)
+	mov esi,[ecx]		;Retrieve the type field of this entry
+	cmp esi,32		;Compare to 32, the entry we want
+	jz foundsysinfo		;Found it
+	test esi,esi		;Check whether we found the entry signifying the end of auxv
+	jz restore		;Go to _start if we reach the end
+	add ecx,8		;Each entry is 8 bytes; go to next
+	jmp loopaux
+  foundsysinfo:
+	mov esi,[ecx+4]		;Retrieve sysinfo address
+	mov [sysinfo],esi	;Save address
+  restore:
+	mov esi,[esp-4]
+	mov ecx,[esp-8]
+	jmp realstart
+  '''
+  auxvec_template = '''
+	mov [esp-4],esi
+	mov [esp-8],ecx
+	mov esi,[esp]
+	mov ecx,esp
+	lea ecx,[ecx+esi*4+4]
+  loopenv:
+	add ecx,4
+	mov esi,[ecx]
+	test esi,esi
+	jnz loopenv
+	add ecx,4
+  loopaux:
+	mov esi,[ecx]
+	cmp esi,32
+	jz foundsysinfo
+	test esi,esi
+	jz restore
+	add ecx,8
+	jmp loopaux
+  foundsysinfo:
+	mov esi,[ecx+4]
+	mov [%s],esi
+  restore:
+	mov esi,[esp-4]
+	mov ecx,[esp-8]
+  	mov DWORD PTR [esp-12], %s
+	jmp [esp-12]
+  '''
+  #Notice that we had to hardcode the new entry.  TODO: centralize where this is defined
+  return _asm(auxvec_template%(global_sysinfo,0x9000000+entry))
 
 def translate_uncond(ins,mapping):
   op = ins.operands[0] #Get operand
@@ -256,27 +344,32 @@ def translate_cond(ins,mapping):
 
 def translate_ret(ins,mapping):
   '''
-  mov [esp-12], eax	;save old eax value
+  mov [esp-24], eax	;save old eax value
   pop eax		;pop address from stack from which we will get destination
   call $+%s		;call lookup function
   mov [esp-4], eax	;save new eax value (destination mapping)
-  mov eax, [esp-16]	;restore old eax value (the pop has shifted our stack so we must look at 12+4=16)
+  mov eax, [esp-28]	;restore old eax value (the pop has shifted our stack so we must look at 24+4=28)
   jmp [esp-4]		;jmp/call to new address
   '''
   template_before = '''
-  mov [esp-12], eax
+  mov [esp-24], eax
   pop eax
   '''
   template_after = '''
   call $+%s
+  %s
   mov [esp-4], eax
-  mov eax, [esp-16]
+  mov eax, [esp-%d]
   jmp [esp-4]
   '''
   code = asm(template_before)
   size = len(code)
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
-  code+=asm(template_after%(lookup_target))
+  if ins.op_str == '':
+    code+=asm(template_after%(lookup_target,'',28)) #28 because of the value we popped
+  else: #For ret instructions that pop imm16 bytes from the stack, add that many bytes to esp
+    pop_amt = int(ins.op_str,16) #We need to retrieve the right eax value from where we saved it
+    code+=asm(template_after%(lookup_target,'add esp,%d'%pop_amt,28+pop_amt))
   return code
 
 def translate_one(ins,mapping):
@@ -285,10 +378,10 @@ def translate_one(ins,mapping):
   elif ins.mnemonic in JCC: #Conditional jump
     return translate_cond(ins,mapping)
   elif ins.mnemonic == 'ret':
-    #TODO: rets with immediate
     return translate_ret(ins,mapping)
   elif ins.mnemonic in ['retn','retf','repz']: #I think retn is not used in Capstone
     print 'WARNING: unimplemented %s %s'%(ins.mnemonic,ins.op_str)
+    return '\xf4\xf4\xf4\xf4' #Create obvious cluster of hlt instructions
   else: #Any other instruction
     return None #No translation needs to be done
 
@@ -356,7 +449,6 @@ def gen_mapping(md,bytes,base):
     for ins in brute_force_disasm(md,bytes,base,off,dummymap):
       if ins is None: #If the instruction was invalid, stop current disassembly
         break
-      #print '0x%x:\t%s\t%s'%(ins.address,ins.mnemonic,ins.op_str)
       newins = translate_one(ins,None) #In this pass, the mapping is incomplete
       if newins is not None:
         currmap[ins.address] = len(newins)
@@ -410,10 +502,21 @@ def gen_mapping(md,bytes,base):
   global mapping_offset
   lookup_function_offset = len(bytes)+base #Where we pretend it was in the old code (after the end)
   mapping_offset = len(bytes)+base+1 #Where we pretend the mapping was in the old code
+  global new_entry_off
+  new_entry_off = offset
+  offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
   mapping[len(bytes)+base] = offset #Should be 1 after last instruction in new mapping
   #Don't yet know mapping offset; we must compute it
   lookup_size = len(get_lookup_code(base,len(bytes),offset,0x8f)) #TODO: Issue with mapping offset & size
   mapping[len(bytes)+base+1] = offset+lookup_size
+  #For NOW, place the global data/function at the end of this because we can't necessarily fit
+  #another section.  TODO: put this somewhere else
+  global global_sysinfo
+  global global_lookup
+  offset+=lookup_size
+  offset+=len(write_mapping(mapping,base,len(bytes)))
+  global_sysinfo = 0x9000000+offset #Notice the hard-coded address.  This won't work if it moves.
+  global_lookup = global_sysinfo+4
   print 'lookup mapping %s:%s'%(hex(lookup_function_offset),hex(newoff+base))
   print 'mapping mapping %s:%s'%(hex(mapping_offset),hex(newoff+base+1))
   return mapping
@@ -429,7 +532,7 @@ def write_mapping(mapping,base,size):
   print 'last address in mapping was 0x%x'%(base+size)
   return bytes
 
-def gen_newcode(md,bytes,base,mapping):
+def gen_newcode(md,bytes,base,mapping,entry):
   print 'Generating new code...'
   ten_percent = len(bytes)/10
   newbytes = ''
@@ -444,7 +547,6 @@ def gen_newcode(md,bytes,base,mapping):
     for ins in brute_force_disasm(md,bytes,base,off,dummymap):
       if ins is None: #If the instruction was invalid, stop current disassembly
         break
-      #print '0x%x:\t%s\t%s'%(ins.address,ins.mnemonic,ins.op_str)
       newins = translate_one(ins,mapping) #In this pass, the mapping is incomplete
       if newins is not None:
         tmps = md.disasm(newins,base+mapping[ins.address])
@@ -491,9 +593,13 @@ def gen_newcode(md,bytes,base,mapping):
     except StopIteration:
       newbytes+=bytes[off] #No change, just add byte
     '''
+  newbytes+=get_auxvec_code(mapping[entry])
   #Append lookup function and then mapping to end of bytes
   newbytes+=get_lookup_code(base,len(bytes),mapping[lookup_function_offset],mapping[mapping_offset])
   newbytes+=write_mapping(mapping,base,len(bytes))
+  #Append the global code and data here for now TODO: move it to a separate section
+  newbytes+='\0\0\0\0'
+  newbytes+=get_global_lookup_code(mapping[lookup_function_offset])
   return newbytes
 
 def renable(fname):
@@ -544,7 +650,7 @@ def renable(fname):
         bytes = seg.data()
         base = seg.header['p_vaddr']
         mapping = gen_mapping(md,bytes,base)
-        newbytes = gen_newcode(md,bytes,base,mapping)
+        newbytes = gen_newcode(md,bytes,base,mapping,entry)
         #maptext = write_mapping(mapping,base,len(bytes))
         #(mapping,newbytes) = translate_all(seg.data(),seg.header['p_vaddr'])
         #insts = md.disasm(newbytes[0x8048360-seg.header['p_vaddr']:0x8048441-seg.header['p_vaddr']],0x8048360)
@@ -591,11 +697,14 @@ def renable(fname):
 		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
         if 0x804ac40 in mapping:
 		print 'bzip2 only: snocString at 0x%x'%mapping[0x804ac40]
-        print 'entry point: %x'%mapping[entry]
+        print 'new entry point: %x'%new_entry_off
+        print 'new _start point: %x'%mapping[entry]
+        print 'global lookup: 0x%x'%global_lookup
         newbase = 0x09000000
         with open('mapdump.json','wb') as f:
           json.dump(mapping,f)
-        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
+        #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
+        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
           
 '''
   with open(fname,'rb') as f:
