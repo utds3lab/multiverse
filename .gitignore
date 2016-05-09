@@ -1,6 +1,10 @@
+*
+!*/
+!*.*
 *~
 nolibc
 teeny
 *.o
 .*
 *.pyc
+peda-session-*

@@ -106,7 +106,7 @@ def get_callback_code(ins,mapping,name):
   code+=asm(restore_eax)
   return code
 
-def get_direct_uncond_code(ins,mapping,target):
+def get_indirect_uncond_code(ins,mapping,target):
   #Commented assembly
   '''
   mov [esp-28], eax	;save old eax value (very far above the stack because of future push/call)
@@ -289,10 +289,10 @@ def translate_uncond(ins,mapping):
   op = ins.operands[0] #Get operand
   if op.type == X86_OP_REG: # e.g. call eax or jmp ebx
     target = ins.reg_name(op.reg)
-    return get_direct_uncond_code(ins,mapping,target)
+    return get_indirect_uncond_code(ins,mapping,target)
   elif op.type == X86_OP_MEM: # e.g. call [eax + ecx*4 + 0xcafebabe] or jmp [ebx+ecx]
     target = ins.op_str
-    return get_direct_uncond_code(ins,mapping,target)
+    return get_indirect_uncond_code(ins,mapping,target)
   elif op.type == X86_OP_IMM: # e.g. call 0xdeadbeef or jmp 0xcafebada
     target = op.imm
     callback_code = b'' #If this ends up not being a plt call with callbacks, add no code
