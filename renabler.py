@@ -490,30 +490,28 @@ def gen_mapping(md,bytes,base):
     if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
       maplist.append(currmap)
     '''
-  offset = 0
+  global lookup_function_offset
+  lookup_function_offset = 0 #Place lookup function at start of new text section
+  lookup_size = len(get_lookup_code(base,len(bytes),0,0x8f)) #TODO: Issue with mapping offset & size
+  offset = lookup_size
   for m in maplist:
     for k in sorted(m.keys()):
       size = m[k]
       mapping[k] = offset
       offset+=size #Add the size of this instruction to the total offset
-  #Now that the mapping is complete, we can add the mapping of the lookup function to the end
-  #TODO: Perhaps it would be more efficient if we guaranteed the function to be aligned?
-  global lookup_function_offset
+  #Now that the mapping is complete, we know the length of it
   global mapping_offset
-  lookup_function_offset = len(bytes)+base #Where we pretend it was in the old code (after the end)
-  mapping_offset = len(bytes)+base+1 #Where we pretend the mapping was in the old code
+  mapping_offset = len(bytes)+base #Where we pretend the mapping was in the old code
   global new_entry_off
   new_entry_off = offset
   offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
-  mapping[len(bytes)+base] = offset #Should be 1 after last instruction in new mapping
+  mapping[0] = 0
   #Don't yet know mapping offset; we must compute it
-  lookup_size = len(get_lookup_code(base,len(bytes),offset,0x8f)) #TODO: Issue with mapping offset & size
-  mapping[len(bytes)+base+1] = offset+lookup_size
+  mapping[len(bytes)+base] = offset
   #For NOW, place the global data/function at the end of this because we can't necessarily fit
   #another section.  TODO: put this somewhere else
   global global_sysinfo
   global global_lookup
-  offset+=lookup_size
   offset+=len(write_mapping(mapping,base,len(bytes)))
   global_sysinfo = 0x9000000+offset #Notice the hard-coded address.  This won't work if it moves.
   global_lookup = global_sysinfo+4
@@ -571,6 +569,8 @@ def gen_newcode(md,bytes,base,mapping,entry):
       currmap[last]+=reroute #add bytes of unconditional jump
       maplist.append(currmap)
       dummymap.update(currmap)
+  #Add the lookup function as the first thing in the new text section
+  newbytes+=get_lookup_code(base,len(bytes),mapping[lookup_function_offset],mapping[mapping_offset])
   for m in maplist: #For each code mapping, in order of discovery
     for k in sorted(m.keys()): #For each original address to code, in order of original address
       newbytes+=m[k]
@@ -594,8 +594,7 @@ def gen_newcode(md,bytes,base,mapping,entry):
       newbytes+=bytes[off] #No change, just add byte
     '''
   newbytes+=get_auxvec_code(mapping[entry])
-  #Append lookup function and then mapping to end of bytes
-  newbytes+=get_lookup_code(base,len(bytes),mapping[lookup_function_offset],mapping[mapping_offset])
+  #Append mapping to end of bytes
   newbytes+=write_mapping(mapping,base,len(bytes))
   #Append the global code and data here for now TODO: move it to a separate section
   newbytes+='\0\0\0\0'

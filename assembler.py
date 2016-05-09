@@ -7,8 +7,9 @@ cache = {}
 pat = re.compile('\$\+[-]?0x[0-9a-f]+')
 pat2 = re.compile('[ ]*push [0-9]+[ ]*')
 pat3 = re.compile('[ ]*mov eax, (d)?word ptr \[0x[0-9a-f]+\][ ]*')
-pat4 = re.compile('[ ]*mov eax, dword ptr \[e[a-z]x [+-] (0x)?[0-9a-f]+\][ ]*')
-pat5 = re.compile('(0x[0-9a-f]+|[0-9])')
+pat4 = re.compile('[ ]*mov eax, (dword ptr )?\[(?P<register>e[a-z][a-z])( )?[+-]( )?(0x)?[0-9a-f]+\][ ]*')
+pat5 = re.compile('(0x[0-9a-f]+|[0-9]+)')
+pat6 = re.compile('[ ]*add esp,(?P<amount>[0-9]*)[ ]*')
 
 #jcxz and jecxz are removed because they don't have a large expansion
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -20,8 +21,8 @@ def _asm(text):
   if text in cache:
     return cache[text]
   else:
-    #with open('uncached.txt','a') as f:
-    #  f.write(text+'\n')
+    with open('uncached.txt','a') as f:
+      f.write(text+'\n')
     code = pwn.asm(text)
     cache[text] = code
     return code
@@ -58,11 +59,16 @@ def asm(text):
     #To handle this, right now this will only replace e[a-z]x registers, although it 
     #seems as if esi,edi, or ebp would also work.
     elif pat4.match(line):
+      m = pat4.match(line)
       #f = open('crazyq.txt','a')
       #f.write(line+'\n')
-      #ocode = pwn.asm(line)
+      #ocode = _asm(line)
       #f.write(str(ocode).encode('hex')+'\n')
-      original = int(pat5.search(line).group(),16)
+      original = pat5.search(line).group()
+      if original.startswith('0x'):
+        original = int(original,16)
+      else:
+        original = int(original)
       if '-' in line:
         original=-original
       if abs(original) > 0x7f:
@@ -73,11 +79,29 @@ def asm(text):
         original = struct.pack('<b',original)
       newcode = _asm(line)
       #f.write(str(newcode).encode('hex')+'\n')
-      newcode = newcode[0:2]+original
+      if m.group('register') == 'esp':
+        newcode = newcode[0:3]+original
+      else:
+        newcode = newcode[0:2]+original
       #f.write(str(newcode).encode('hex')+'\n')
       #if newcode != ocode:
+      #  print 'NO MATCH %s:\n%s\n%s'%(line,newcode.encode('hex'),ocode.encode('hex'))
       #  raise Exception
       #f.close() 
+      code+=newcode
+    elif pat6.match(line):
+      #ocode = _asm(line)
+      m = pat6.match(line)
+      amount = int(m.group('amount'))
+      if amount > 0x7f:
+        newcode = _asm('add esp,0x8f')
+        newcode = newcode[:2] + struct.pack('<i',amount)
+      else:
+        newcode = _asm('add esp,0x7f')
+        newcode = newcode[:2] + struct.pack('<b',amount)
+      #if newcode != ocode:
+      #  print 'NO MATCH %s:\n%s\n%s'%(line,newcode.encode('hex'),ocode.encode('hex'))
+      #  raise Exception
       code+=newcode
     else:
         code+=_asm(line)
