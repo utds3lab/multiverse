@@ -3,7 +3,7 @@ sys.path.insert(0,'/home/erick/git/delinker/Delinker/src')
 from ELFManip import ELFManip, Custom_Section, Custom_Segment
 from Constants import PT_LOAD
 
-def rewrite(fname,nname,newcode,newbase,entry):
+def rewrite_noglobal(fname,nname,newcode,newbase,entry):
   elf = ELFManip(fname)
   with open(newcode) as f:
     newbytes = f.read()
@@ -13,6 +13,23 @@ def rewrite(fname,nname,newcode,newbase,entry):
     newtext_segment = Custom_Segment(PT_LOAD)
     newtext_segment = elf.add_segment(newtext_segment)
     elf.add_section(newtext_section, newtext_segment)
+    elf.set_entry_point(entry)
+    elf.write_new_elf(nname)
+
+def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry):
+  elf = ELFManip(fname)
+  with open(newcode) as f:
+    newbytes = f.read()
+    newtext_section = Custom_Section(newbytes, sh_addr = newbase)
+    newglobal_section = Custom_Section(newglobal, sh_addr = newglobalbase)
+    if newtext_section is None or newglobal_section is None:
+      raise Exception
+    newtext_segment = Custom_Segment(PT_LOAD)
+    newtext_segment = elf.add_segment(newtext_segment)
+    newglobal_segment = Custom_Segment(PT_LOAD)
+    newglobal_segment = elf.add_segment(newglobal_segment)
+    elf.add_section(newtext_section, newtext_segment)
+    elf.add_section(newglobal_section, newglobal_segment)
     elf.set_entry_point(entry)
     elf.write_new_elf(nname)
 

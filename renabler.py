@@ -47,7 +47,7 @@ plt = {}
 lookup_function_offset = 0x8f
 mapping_offset = 0x8f
 global_sysinfo = 0x8f	#Address containing sysinfo's address
-global_lookup = 0x8f	#Address containing global lookup function
+global_lookup = 0x7000000	#Address containing global lookup function
 popgm = 'popgm'
 new_entry_off = 0x8f
 get_pc_thunk = None
@@ -512,12 +512,16 @@ def gen_mapping(md,bytes,base):
   #For NOW, place the global data/function at the end of this because we can't necessarily fit
   #another section.  TODO: put this somewhere else
   global global_sysinfo
+  #The first time, sysinfo's location is unknown, so it is wrong
+  global_sysinfo = global_lookup + len(get_global_lookup_code(mapping[lookup_function_offset]))
+  #Now that this is set, the auxvec code should work
+  '''global global_sysinfo
   global global_lookup
   offset+=len(write_mapping(mapping,base,len(bytes)))
   global_sysinfo = 0x9000000+offset #Notice the hard-coded address.  This won't work if it moves.
   global_lookup = global_sysinfo+4
   print 'lookup mapping %s:%s'%(hex(lookup_function_offset),hex(newoff+base))
-  print 'mapping mapping %s:%s'%(hex(mapping_offset),hex(newoff+base+1))
+  print 'mapping mapping %s:%s'%(hex(mapping_offset),hex(newoff+base+1))'''
   return mapping
 
 def write_mapping(mapping,base,size):
@@ -598,9 +602,16 @@ def gen_newcode(md,bytes,base,mapping,entry):
   #Append mapping to end of bytes
   newbytes+=write_mapping(mapping,base,len(bytes))
   #Append the global code and data here for now TODO: move it to a separate section
-  newbytes+='\0\0\0\0'
-  newbytes+=get_global_lookup_code(mapping[lookup_function_offset])
+  '''newbytes+='\0\0\0\0'
+  newbytes+=get_global_lookup_code(mapping[lookup_function_offset])'''
   return newbytes
+
+#TODO: Do NOT rely on mapping
+def write_global_mapping_section(mapping):
+  globalbytes = get_global_lookup_code(mapping[lookup_function_offset])
+  globalbytes+='\0\0\0\0' #sysinfo field
+  globalbytes+='\xff'*((0xc0000000>>12)<<2) #Global mapping (0x300000 0xff bytes) ending at kernel
+  return globalbytes
 
 def renable(fname):
   offs = size = addr = 0
@@ -704,7 +715,8 @@ def renable(fname):
         with open('mapdump.json','wb') as f:
           json.dump(mapping,f)
         #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
-        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
+        #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
+        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,write_global_mapping_section(mapping),global_lookup,newbase+new_entry_off)
           
 '''
   with open(fname,'rb') as f:
