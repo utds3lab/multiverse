@@ -48,6 +48,7 @@ lookup_function_offset = 0x8f
 mapping_offset = 0x8f
 global_sysinfo = 0x8f	#Address containing sysinfo's address
 global_lookup = 0x8f	#Address containing global lookup function
+popgm = 'popgm'
 new_entry_off = 0x8f
 get_pc_thunk = None
 #List of library functions that have callback args; each function in the dict has a list of
@@ -302,11 +303,11 @@ def translate_uncond(ins,mapping):
     #  #Replace the call with a mov instruction setting ebx to what WOULD have been the
     #  #result in the original code, assuming that the original code is in its original place.
     #  return asm('mov ebx,%s'%thunk_ret)
-    if in_plt(target):
-      #print 'plt found @%s: %s %s'%(hex(ins.address),ins.mnemonic,ins.op_str)
-      entry = get_plt_entry(target)
-      if entry is not None and entry in callbacks.keys():
-        callback_code = get_callback_code(ins,mapping,entry)
+    #if in_plt(target):
+    #  #print 'plt found @%s: %s %s'%(hex(ins.address),ins.mnemonic,ins.op_str)
+    #  entry = get_plt_entry(target)
+    #  if entry is not None and entry in callbacks.keys():
+    #    callback_code = get_callback_code(ins,mapping,entry)
     if ins.mnemonic == 'call': #If it's a call, push the original address of the next instruction
       #TODO: eventually get rid of callback checks and rename this (eventually we will modify all libs).
       callback_code += asm('push %s'%(ins.address+len(ins.bytes)))
