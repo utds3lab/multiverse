@@ -48,6 +48,7 @@ newbase = 0x09000000
 lookup_function_offset = 0x8f
 mapping_offset = 0x8f
 global_sysinfo = 0x8f	#Address containing sysinfo's address
+global_flag = 0x8f
 global_lookup = 0x7000000	#Address containing global lookup function
 popgm = 'popgm'
 popgm_offset = 0x8f
@@ -213,9 +214,9 @@ def get_global_lookup_code(lookup_off):
   	cmp eax,[%s]
   	jz sysinfo
   glookup:
-  	cmp 1,BYTE PTR[called]
+  	cmp BYTE PTR[%s],1
   	jz failure
-  	mov BYTE PTR [called],1
+  	mov BYTE PTR [%s],1
   	push eax
   	shr eax,12
   	shl eax,2
@@ -223,26 +224,22 @@ def get_global_lookup_code(lookup_off):
   	mov DWORD PTR [esp-32],eax
   	pop eax
         call [esp-36]
-  	mov BYTE PTR [called],0
+  	mov BYTE PTR [%s],0
   	ret
   sysinfo:
   	push eax
   	mov eax,[esp+8]
-  	;mov DWORD PTR [esp-32],%s
-  	;call [esp-32]
   	call glookup
   	mov [esp+8],eax
   	pop eax
 	ret
   failure:
   	hlt
-  called:
-  	db 0
   '''
   #This is a dreadful workaround hack at the moment.  We hard code a single lookup function.
   #TODO: code a full global lookup implementation that somehow can find all local lookup functions
   #return _asm(global_lookup_template%(global_sysinfo,global_sysinfo+4,newbase+lookup_off))
-  return _asm(global_lookup_template%(global_sysinfo,global_sysinfo+4))
+  return _asm(global_lookup_template%(global_sysinfo,global_flag,global_flag,global_sysinfo+4,global_flag))
 
 def get_auxvec_code(entry):
   #Example assembly for searching the auxiliary vector
@@ -542,8 +539,11 @@ def gen_mapping(md,bytes,base):
   #For NOW, place the global data/function at the end of this because we can't necessarily fit
   #another section.  TODO: put this somewhere else
   global global_sysinfo
-  #The first time, sysinfo's location is unknown, so it is wrong
-  global_sysinfo = global_lookup + len(get_global_lookup_code(mapping[lookup_function_offset]))
+  global global_flag
+  #The first time, sysinfo's location is unknown,
+  #so it is wrong in the call to get_global_lookup_code
+  global_flag = global_lookup + len(get_global_lookup_code(mapping[lookup_function_offset]))
+  global_sysinfo = global_flag+1 #Global flag is only one byte
   #Now that this is set, the auxvec code should work
   '''global global_sysinfo
   global global_lookup
@@ -642,6 +642,7 @@ def gen_newcode(md,bytes,base,mapping,entry):
 #TODO: Do NOT rely on mapping
 def write_global_mapping_section(mapping):
   globalbytes = get_global_lookup_code(mapping[lookup_function_offset])
+  globalbytes+='\0' #flag field
   globalbytes+='\0\0\0\0' #sysinfo field
   #Global mapping (0x3ffff8 0xff bytes) ending at kernel addresses.  Note it is NOT ending
   #at 0xc0000000 because this boundary is only true for 32-bit kernels.  For 64-bit kernels,
@@ -781,7 +782,7 @@ def renable(fname):
 
 if __name__ == '__main__':
   if len(sys.argv) == 2:
-    #renable(sys.argv[1])
-    cProfile.run('renable(sys.argv[1])')
+    renable(sys.argv[1])
+    #cProfile.run('renable(sys.argv[1])')
   else:
     print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]
