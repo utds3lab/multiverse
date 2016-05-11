@@ -43,12 +43,14 @@ def ELF32_R_SYM(val):
 
 #Globals: If there end up being too many of these, put them in a Context & pass them around
 plt = {}
+newbase = 0x09000000
 #TODO: Set actual address of function
 lookup_function_offset = 0x8f
 mapping_offset = 0x8f
 global_sysinfo = 0x8f	#Address containing sysinfo's address
 global_lookup = 0x7000000	#Address containing global lookup function
 popgm = 'popgm'
+popgm_offset = 0x8f
 new_entry_off = 0x8f
 get_pc_thunk = None
 #List of library functions that have callback args; each function in the dict has a list of
@@ -119,7 +121,7 @@ def get_indirect_uncond_code(ins,mapping,target):
   jmp [esp-4]		;jmp to new address
   '''
   template_before = '''
-  mov [esp-28], eax
+  mov [esp-32], eax
   mov eax, %s
   %s
   '''
@@ -145,9 +147,9 @@ def get_indirect_uncond_code(ins,mapping,target):
   #20 bytes, which will obliterate anything stored too close to the stack pointer.  That, plus
   #the return value we push on the stack, means we need to put it at least 28 bytes away.
   if ins.mnemonic == 'call':
-    code+=asm(template_after%(lookup_target,24))
-  else:  
     code+=asm(template_after%(lookup_target,28))
+  else:  
+    code+=asm(template_after%(lookup_target,32))
   return code
 
 def get_lookup_code(base,size,lookup_off,mapping_off):
@@ -210,19 +212,37 @@ def get_global_lookup_code(lookup_off):
   global_lookup_template = '''
   	cmp eax,[%s]
   	jz sysinfo
+  glookup:
+  	cmp 1,BYTE PTR[called]
+  	jz failure
+  	mov BYTE PTR [called],1
+  	push eax
+  	shr eax,12
+  	shl eax,2
+  	mov eax,[%s+eax]
+  	mov DWORD PTR [esp-32],eax
+  	pop eax
+        call [esp-36]
+  	mov BYTE PTR [called],0
   	ret
   sysinfo:
   	push eax
   	mov eax,[esp+8]
-  	mov DWORD PTR [esp-32],%s
-  	call [esp-32]
+  	;mov DWORD PTR [esp-32],%s
+  	;call [esp-32]
+  	call glookup
   	mov [esp+8],eax
   	pop eax
 	ret
+  failure:
+  	hlt
+  called:
+  	db 0
   '''
   #This is a dreadful workaround hack at the moment.  We hard code a single lookup function.
   #TODO: code a full global lookup implementation that somehow can find all local lookup functions
-  return _asm(global_lookup_template%(global_sysinfo,0x9000000+lookup_off))
+  #return _asm(global_lookup_template%(global_sysinfo,global_sysinfo+4,newbase+lookup_off))
+  return _asm(global_lookup_template%(global_sysinfo,global_sysinfo+4))
 
 def get_auxvec_code(entry):
   #Example assembly for searching the auxiliary vector
@@ -252,6 +272,9 @@ def get_auxvec_code(entry):
   restore:
 	mov esi,[esp-4]
 	mov ecx,[esp-8]
+  	push global_mapping	;Push address of global mapping for popgm
+  	call popgm
+  	add esp,4		;Pop address of global mapping
 	jmp realstart
   '''
   auxvec_template = '''
@@ -280,11 +303,14 @@ def get_auxvec_code(entry):
   restore:
 	mov esi,[esp-4]
 	mov ecx,[esp-8]
+  	push %s
+  	mov DWORD PTR [esp-12], %s
+  	call [esp-12]
+  	add esp,4
   	mov DWORD PTR [esp-12], %s
 	jmp [esp-12]
   '''
-  #Notice that we had to hardcode the new entry.  TODO: centralize where this is defined
-  return _asm(auxvec_template%(global_sysinfo,0x9000000+entry))
+  return _asm(auxvec_template%(global_sysinfo,global_sysinfo+4,newbase+popgm_offset,newbase+entry))
 
 def translate_uncond(ins,mapping):
   op = ins.operands[0] #Get operand
@@ -345,15 +371,15 @@ def translate_cond(ins,mapping):
 
 def translate_ret(ins,mapping):
   '''
-  mov [esp-24], eax	;save old eax value
+  mov [esp-28], eax	;save old eax value
   pop eax		;pop address from stack from which we will get destination
   call $+%s		;call lookup function
   mov [esp-4], eax	;save new eax value (destination mapping)
-  mov eax, [esp-28]	;restore old eax value (the pop has shifted our stack so we must look at 24+4=28)
+  mov eax, [esp-32]	;restore old eax value (the pop has shifted our stack so we must look at 28+4=32)
   jmp [esp-4]		;jmp/call to new address
   '''
   template_before = '''
-  mov [esp-24], eax
+  mov [esp-28], eax
   pop eax
   '''
   template_after = '''
@@ -367,10 +393,10 @@ def translate_ret(ins,mapping):
   size = len(code)
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
   if ins.op_str == '':
-    code+=asm(template_after%(lookup_target,'',28)) #28 because of the value we popped
+    code+=asm(template_after%(lookup_target,'',32)) #32 because of the value we popped
   else: #For ret instructions that pop imm16 bytes from the stack, add that many bytes to esp
     pop_amt = int(ins.op_str,16) #We need to retrieve the right eax value from where we saved it
-    code+=asm(template_after%(lookup_target,'add esp,%d'%pop_amt,28+pop_amt))
+    code+=asm(template_after%(lookup_target,'add esp,%d'%pop_amt,32+pop_amt))
   return code
 
 def translate_one(ins,mapping):
@@ -506,6 +532,10 @@ def gen_mapping(md,bytes,base):
   global new_entry_off
   new_entry_off = offset
   offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
+  global popgm_offset
+  popgm_offset = offset
+  with open(popgm) as f:
+    offset+=len(f.read()) #Add offset of popgm, as it will be placed after auxvec
   mapping[0] = 0
   #Don't yet know mapping offset; we must compute it
   mapping[len(bytes)+base] = offset
@@ -599,6 +629,9 @@ def gen_newcode(md,bytes,base,mapping,entry):
       newbytes+=bytes[off] #No change, just add byte
     '''
   newbytes+=get_auxvec_code(mapping[entry])
+  #Append popgm functions after auxvec code
+  with open(popgm) as f:
+    newbytes+=f.read()
   #Append mapping to end of bytes
   newbytes+=write_mapping(mapping,base,len(bytes))
   #Append the global code and data here for now TODO: move it to a separate section
@@ -610,7 +643,11 @@ def gen_newcode(md,bytes,base,mapping,entry):
 def write_global_mapping_section(mapping):
   globalbytes = get_global_lookup_code(mapping[lookup_function_offset])
   globalbytes+='\0\0\0\0' #sysinfo field
-  globalbytes+='\xff'*((0xc0000000>>12)<<2) #Global mapping (0x300000 0xff bytes) ending at kernel
+  #Global mapping (0x3ffff8 0xff bytes) ending at kernel addresses.  Note it is NOT ending
+  #at 0xc0000000 because this boundary is only true for 32-bit kernels.  For 64-bit kernels,
+  #the application is able to use most of the entire 4GB address space, and the kernel only
+  #holds onto a tiny 8KB at the top of the address space.
+  globalbytes+='\xff'*((0xffffe000>>12)<<2) 
   return globalbytes
 
 def renable(fname):
@@ -711,7 +748,6 @@ def renable(fname):
         print 'new entry point: %x'%new_entry_off
         print 'new _start point: %x'%mapping[entry]
         print 'global lookup: 0x%x'%global_lookup
-        newbase = 0x09000000
         with open('mapdump.json','wb') as f:
           json.dump(mapping,f)
         #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
@@ -745,7 +781,7 @@ def renable(fname):
 
 if __name__ == '__main__':
   if len(sys.argv) == 2:
-    renable(sys.argv[1])
-    #cProfile.run('renable(sys.argv[1])')
+    #renable(sys.argv[1])
+    cProfile.run('renable(sys.argv[1])')
   else:
     print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]

@@ -55,7 +55,7 @@ int _start(int *global_mapping){
 
 }
 
-unsigned int __attribute__ ((noinline)) my_read(int fd, char *buf, unsigned int count){
+ unsigned int __attribute__ ((noinline)) my_read(int fd, char *buf, unsigned int count){
 	unsigned int bytes_read;
 	asm volatile(
 		".intel_syntax noprefix\n"
@@ -138,9 +138,9 @@ void parse_range(char *line, int *start, int *end){
 	*end   = my_atoi(line+9);
 }
 
-void populate_mapping(unsigned int start, unsigned int end, unsigned int mapper, unsigned int *global_mapping){
+void populate_mapping(unsigned int start, unsigned int end, unsigned int lookup_function, unsigned int *global_mapping){
 	do{
-		global_mapping[(start >> 12) << 2] = mapper;
+		global_mapping[(start >> 12) << 2] = lookup_function;
 		start += 0x1000;
 	} while(start < end);
 }
@@ -151,22 +151,33 @@ void process_maps(char *buf, int *global_mapping){
 	 * populate global_mapping for each executable set of pages
 	 */
 	char *line = buf;
-	unsigned int prev_start, prev_end;
-	unsigned int curr_start = 0, curr_end = 0;
-	do{
-		if (is_exec(line)){
-			prev_start = curr_start;
-			prev_end   = curr_end;
-			parse_range(line, &curr_start, &curr_end);
-			//printf("[0x%08x-0x%08x]\n", curr_start, curr_end);
+	//unsigned int global_start, global_end;
+	unsigned int old_text_start, old_text_end;
+	unsigned int new_text_start, new_text_end;
 
-			if (is_write(line)){
-				// this must be the added segment which contains the lookup function
-				populate_mapping(prev_start, prev_end, curr_start, global_mapping);
-			}
+	line = next_line(line);
+	do{ // process each block of maps
+		// process all segments from this object under very specific assumptions
+		if (is_exec(line) && is_write(line)){
+			// first exec and write segment must be the "global section"
+			//parse_range(line, &global_start, &global_end);
+			// jump to the old text segment
+			do{
+				line = next_line(line);
+			} while (!is_exec(line));
+			parse_range(line, &old_text_start, &old_text_end);
+
+			// jump to the new text segment
+			do{
+				line = next_line(line);
+			} while (!(is_exec(line) && is_write(line)));
+			parse_range(line, &new_text_start, &new_text_end);
+
+			populate_mapping(old_text_start, old_text_end, new_text_start, global_mapping);
 		}
 		line = next_line(line);
 	} while(line != NULL);
+
 }
 
 /*

@@ -7,6 +7,7 @@ def rewrite_noglobal(fname,nname,newcode,newbase,entry):
   elf = ELFManip(fname)
   with open(newcode) as f:
     newbytes = f.read()
+    elf.relocate_phdrs()
     newtext_section = Custom_Section(newbytes, sh_addr = newbase)
     if newtext_section is None:
       raise Exception
@@ -20,6 +21,7 @@ def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry):
   elf = ELFManip(fname)
   with open(newcode) as f:
     newbytes = f.read()
+    elf.relocate_phdrs()
     newtext_section = Custom_Section(newbytes, sh_addr = newbase)
     newglobal_section = Custom_Section(newglobal, sh_addr = newglobalbase)
     if newtext_section is None or newglobal_section is None:
