@@ -21,8 +21,8 @@ def _asm(text):
   if text in cache:
     return cache[text]
   else:
-    with open('uncached.txt','a') as f:
-      f.write(text+'\n')
+    #with open('uncached.txt','a') as f:
+    #  f.write(text+'\n')
     code = pwn.asm(text)
     cache[text] = code
     return code

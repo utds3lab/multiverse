@@ -53,6 +53,7 @@ global_lookup = 0x7000000	#Address containing global lookup function
 popgm = 'popgm'
 popgm_offset = 0x8f
 new_entry_off = 0x8f
+write_so = False
 get_pc_thunk = None
 #List of library functions that have callback args; each function in the dict has a list of
 #the arguments passed to it that are a callback (measured as the index of which argument it is)
@@ -222,6 +223,8 @@ def get_global_lookup_code(lookup_off):
   	shl eax,2
   	mov eax,[%s+eax]
   	mov DWORD PTR [esp-32],eax
+  	cmp eax, 0xffffffff
+  	jz failure
   	pop eax
         call [esp-36]
   	mov BYTE PTR [%s],0
@@ -526,32 +529,27 @@ def gen_mapping(md,bytes,base):
   #Now that the mapping is complete, we know the length of it
   global mapping_offset
   mapping_offset = len(bytes)+base #Where we pretend the mapping was in the old code
-  global new_entry_off
-  new_entry_off = offset
-  offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
-  global popgm_offset
-  popgm_offset = offset
-  with open(popgm) as f:
-    offset+=len(f.read()) #Add offset of popgm, as it will be placed after auxvec
+  if not write_so:
+    global new_entry_off
+    new_entry_off = offset
+    offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
+    global popgm_offset
+    popgm_offset = offset
+    with open(popgm) as f:
+      offset+=len(f.read()) #Add offset of popgm, as it will be placed after auxvec
   mapping[0] = 0
   #Don't yet know mapping offset; we must compute it
   mapping[len(bytes)+base] = offset
-  #For NOW, place the global data/function at the end of this because we can't necessarily fit
-  #another section.  TODO: put this somewhere else
-  global global_sysinfo
-  global global_flag
-  #The first time, sysinfo's location is unknown,
-  #so it is wrong in the call to get_global_lookup_code
-  global_flag = global_lookup + len(get_global_lookup_code(mapping[lookup_function_offset]))
-  global_sysinfo = global_flag+1 #Global flag is only one byte
-  #Now that this is set, the auxvec code should work
-  '''global global_sysinfo
-  global global_lookup
-  offset+=len(write_mapping(mapping,base,len(bytes)))
-  global_sysinfo = 0x9000000+offset #Notice the hard-coded address.  This won't work if it moves.
-  global_lookup = global_sysinfo+4
-  print 'lookup mapping %s:%s'%(hex(lookup_function_offset),hex(newoff+base))
-  print 'mapping mapping %s:%s'%(hex(mapping_offset),hex(newoff+base+1))'''
+  if not write_so:
+    #For NOW, place the global data/function at the end of this because we can't necessarily fit
+    #another section.  TODO: put this somewhere else
+    global global_sysinfo
+    global global_flag
+    #The first time, sysinfo's location is unknown,
+    #so it is wrong in the call to get_global_lookup_code
+    global_flag = global_lookup + len(get_global_lookup_code(mapping[lookup_function_offset]))
+    global_sysinfo = global_flag+1 #Global flag is only one byte
+    #Now that this is set, the auxvec code should work
   return mapping
 
 def write_mapping(mapping,base,size):
@@ -628,15 +626,13 @@ def gen_newcode(md,bytes,base,mapping,entry):
     except StopIteration:
       newbytes+=bytes[off] #No change, just add byte
     '''
-  newbytes+=get_auxvec_code(mapping[entry])
-  #Append popgm functions after auxvec code
-  with open(popgm) as f:
-    newbytes+=f.read()
+  if not write_so:
+    newbytes+=get_auxvec_code(mapping[entry])
+    #Append popgm functions after auxvec code
+    with open(popgm) as f:
+      newbytes+=f.read()
   #Append mapping to end of bytes
   newbytes+=write_mapping(mapping,base,len(bytes))
-  #Append the global code and data here for now TODO: move it to a separate section
-  '''newbytes+='\0\0\0\0'
-  newbytes+=get_global_lookup_code(mapping[lookup_function_offset])'''
   return newbytes
 
 #TODO: Do NOT rely on mapping
@@ -746,14 +742,18 @@ def renable(fname):
 		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
         if 0x804ac40 in mapping:
 		print 'bzip2 only: snocString at 0x%x'%mapping[0x804ac40]
-        print 'new entry point: %x'%new_entry_off
-        print 'new _start point: %x'%mapping[entry]
-        print 'global lookup: 0x%x'%global_lookup
+        if not write_so:
+          print 'new entry point: %x'%new_entry_off
+          print 'new _start point: %x'%mapping[entry]
+          print 'global lookup: 0x%x'%global_lookup
         with open('mapdump.json','wb') as f:
           json.dump(mapping,f)
         #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
         #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
-        bin_write.rewrite(fname,fname+'-r','newbytes',newbase,write_global_mapping_section(mapping),global_lookup,newbase+new_entry_off)
+        if not write_so:
+          bin_write.rewrite(fname,fname+'-r','newbytes',newbase,write_global_mapping_section(mapping),global_lookup,newbase+new_entry_off)
+        else:
+          bin_write.rewrite_noglobal(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
           
 '''
   with open(fname,'rb') as f:
@@ -779,10 +779,12 @@ def renable(fname):
     print {k: (lambda x:x+addr)(v) for k,v in mapping.items()}
     print asm(save_register%('eax','eax','eax')).encode('hex')'''
     
-
 if __name__ == '__main__':
   if len(sys.argv) == 2:
     renable(sys.argv[1])
     #cProfile.run('renable(sys.argv[1])')
+  elif len(sys.argv) == 3 and sys.argv[1] == '-so':
+    write_so = True
+    renable(sys.argv[2])
   else:
-    print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]
+    print "Error: must pass executable filename.\nCorrect usage: %s [-so] <filename>"%sys.argv[0]
