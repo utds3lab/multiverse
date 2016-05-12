@@ -182,35 +182,60 @@ def get_lookup_code(base,size,lookup_off,mapping_off):
 	hlt
   '''
   lookup_template = '''
-	push edx
-	mov edx,eax
+	push ebx
+	mov ebx,eax
 	call get_eip
   get_eip:
 	pop eax
 	sub eax,%s
-	sub edx,%s
-	jl outside
-	cmp edx,%s
-	jge outside
-	mov edx,[eax+edx*4+%s]
-	cmp edx, 0xffffffff
+  	%s
+	jb outside
+	cmp ebx,%s
+	jae outside
+	mov ebx,[eax+ebx*4+%s]
+	cmp ebx, 0xffffffff
 	je failure
-	add eax,edx
-	pop edx
+	add eax,ebx
+	pop ebx
 	ret
   outside:
-	add edx,%s
-	mov eax,edx
-	pop edx
+	%s
+	mov eax,ebx
+	pop ebx
 	mov DWORD PTR [esp-32],%s
   	jmp [esp-32]
   failure:
 	hlt
   '''
+  exec_code = '''
+  	sub ebx,%s
+  '''
+  exec_restore = '''
+  	add ebx,%s
+  '''
+  #For an .so, it can be loaded at an arbitrary address, so we cannot depend on
+  #the base address being in a fixed location.  Therefore, we instead compute 
+  #the old text section's start address by using the new text section's offset
+  #from it.  The new text section's offset equals the lookup address and is
+  #stored in eax.  I use lea instead of add because it doesn't affect the flags,
+  #which are used to determine if ebx is outside the range.
+  so_code = '''
+  	sub eax,%s
+  	sub ebx,eax
+  	lea eax,[eax+%s]
+  '''
+  so_restore = '''
+  	sub eax,%s
+  	add ebx,eax
+  	add eax,%s
+  '''
   #retrieve eip 8 bytes after start of lookup function
-  return _asm(lookup_template%(lookup_off+8,base,size,mapping_off,base,global_lookup))
+  if write_so:
+    return _asm(lookup_template%(lookup_off+8,so_code%(newbase,newbase),size,mapping_off,so_restore%(newbase,newbase),global_lookup))
+  else:
+    return _asm(lookup_template%(lookup_off+8,exec_code%base,size,mapping_off,exec_restore%base,global_lookup))
 
-def get_global_lookup_code(lookup_off):
+def get_global_lookup_code():
   global_lookup_template = '''
   	cmp eax,[%s]
   	jz sysinfo
@@ -547,7 +572,7 @@ def gen_mapping(md,bytes,base):
     global global_flag
     #The first time, sysinfo's location is unknown,
     #so it is wrong in the call to get_global_lookup_code
-    global_flag = global_lookup + len(get_global_lookup_code(mapping[lookup_function_offset]))
+    global_flag = global_lookup + len(get_global_lookup_code())
     global_sysinfo = global_flag+1 #Global flag is only one byte
     #Now that this is set, the auxvec code should work
   return mapping
@@ -635,9 +660,8 @@ def gen_newcode(md,bytes,base,mapping,entry):
   newbytes+=write_mapping(mapping,base,len(bytes))
   return newbytes
 
-#TODO: Do NOT rely on mapping
-def write_global_mapping_section(mapping):
-  globalbytes = get_global_lookup_code(mapping[lookup_function_offset])
+def write_global_mapping_section():
+  globalbytes = get_global_lookup_code()
   globalbytes+='\0' #flag field
   globalbytes+='\0\0\0\0' #sysinfo field
   #Global mapping (0x3ffff8 0xff bytes) ending at kernel addresses.  Note it is NOT ending
@@ -751,7 +775,7 @@ def renable(fname):
         #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
         #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
         if not write_so:
-          bin_write.rewrite(fname,fname+'-r','newbytes',newbase,write_global_mapping_section(mapping),global_lookup,newbase+new_entry_off)
+          bin_write.rewrite(fname,fname+'-r','newbytes',newbase,write_global_mapping_section(),global_lookup,newbase+new_entry_off)
         else:
           bin_write.rewrite_noglobal(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
           

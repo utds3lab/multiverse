@@ -1,5 +1,6 @@
 /*
- * gcc -m32 -nostdlib -fno-toplevel-reorder -masm=intel -O1 populate_gm.c
+ * debug: gcc -m32 -Wall -DDEBUG -fno-toplevel-reorder -masm=intel -O1 populate_gm.c
+ * build: gcc -m32 -Wall -nostdlib -fno-toplevel-reorder -masm=intel -O1 populate_gm.c
  * dd if=a.out of=popgm skip=text_offset bs=1 count=text_size
  *
  * Read and parse /proc/self/maps filling in the global mapping
@@ -15,20 +16,28 @@
  * 		 		- can happen in rare(?) cases... the file is not a "normal file"
  *
  */
-
-//#include <stdio.h>
-
-#ifndef NULL
+#ifdef DEBUG
+#include <stdio.h>
+#include <sys/mman.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#else
 #define NULL ( (void *) 0)
 #endif
 
-unsigned int __attribute__ ((noinline)) my_read(int fd, char *buf, unsigned int count);
-int __attribute__ ((noinline)) my_open(const char *path);
-void process_maps(char *buf, int *global_mapping);
+unsigned int __attribute__ ((noinline)) my_read(int, char *, unsigned int);
+int __attribute__ ((noinline)) my_open(const char *);
+void populate_mapping(unsigned int, unsigned int, unsigned int, unsigned int *);
+void process_maps(char *, unsigned int *);
+unsigned int lookup(unsigned int, unsigned int *);
 
-//int wrapper(int *global_mapping){
-int _start(int *global_mapping){
-
+#ifdef DEBUG
+int wrapper(unsigned int *global_mapping){
+#else
+int _start(void *global_mapping){
+#endif
 	// force string to be stored on the stack even with optimizations
 	//char maps_path[] = "/proc/self/maps\0";
 	volatile int maps_path[] = {
@@ -41,21 +50,46 @@ int _start(int *global_mapping){
 	unsigned int buf_size = 0x1000;
 	char buf[buf_size];
 	int proc_maps_fd;
-	unsigned int bytes_read;
 
 
 	proc_maps_fd = my_open((char *) &maps_path);
-	bytes_read = my_read(proc_maps_fd, buf, buf_size);
+	my_read(proc_maps_fd, buf, buf_size);
 	buf[buf_size -1] = '\0'; // must null terminate
 
+#ifdef DEBUG
+	// simulation for testing - dont call process maps
+	populate_mapping(0x08800000, 0x08880000, 0x07000000, global_mapping);
+	/*
+	int i;
+	for (i = 0x08800000; i < 0x08880000; i++){
+		if (lookup(i, global_mapping) != 0x07000000){
+			printf("Failed lookup of 0x%08x\n", i);
+		}
+	}
+	*/
+	//chedck edge cases
+
+	lookup(0x08800000-1, global_mapping);
+	lookup(0x08800000, global_mapping);
+	lookup(0x08880000+1, global_mapping);
+	//printf("0x08812345 => 0x%08x\n", lookup(0x08812345, global_mapping));
+#else
 	process_maps(buf, global_mapping);
-
-	//printf("READ:\n%s", buf);
+#endif
 	return 0;
-
 }
 
- unsigned int __attribute__ ((noinline)) my_read(int fd, char *buf, unsigned int count){
+#ifdef DEBUG
+unsigned int lookup(unsigned int addr, unsigned int *global_mapping){
+	unsigned int index = addr >> 12;
+	//if (global_mapping[index] == 0xffffffff){
+		printf("0x%08x :: mapping[%d] :: &0x%p :: 0x%08x\n", addr, index, &(global_mapping[index]), global_mapping[index]);
+	//}
+	return global_mapping[index];
+}
+#endif
+
+unsigned int __attribute__ ((noinline)) my_read(int fd, char *buf, unsigned int count){
 	unsigned int bytes_read;
 	asm volatile(
 		".intel_syntax noprefix\n"
@@ -96,7 +130,7 @@ int is_exec(char *line){
 
 int is_write(char *line){
 	// e.g., "08048000-08049000 rw-p ..."
-	return line[18] == 'w';
+	return line[19] == 'w';
 }
 
 char *next_line(char *line){
@@ -121,7 +155,6 @@ unsigned int my_atoi(char *a){
 	 * e.g., "0804a000"
 	 */
 	unsigned int i = 0;
-	int base = 16;
 	int place, digit;
 	for (place = 7; place >= 0; place--, a++){
 		digit = (int)(*a) - 0x30;
@@ -132,20 +165,31 @@ unsigned int my_atoi(char *a){
 	return i;
 }
 
-void parse_range(char *line, int *start, int *end){
+void parse_range(char *line, unsigned int *start, unsigned int *end){
 	// e.g., "08048000-08049000 ..."
 	*start = my_atoi(line);
 	*end   = my_atoi(line+9);
 }
 
 void populate_mapping(unsigned int start, unsigned int end, unsigned int lookup_function, unsigned int *global_mapping){
+	unsigned int index = start >> 12;
+	int i;
+	for(i = 0; i < (end - start) / 0x1000; i++){
+		global_mapping[index + i] = lookup_function;
+	}
+#ifdef DEBUG
+	printf("Wrote %d entries\n", i);
+#endif
+	/*
 	do{
-		global_mapping[(start >> 12) << 2] = lookup_function;
+		global_mapping[index] = lookup_function;
+		index++;
 		start += 0x1000;
 	} while(start < end);
+	*/
 }
 
-void process_maps(char *buf, int *global_mapping){
+void process_maps(char *buf, unsigned int *global_mapping){
 	/*
 	 * Process buf which contains output of /proc/self/maps
 	 * populate global_mapping for each executable set of pages
@@ -155,35 +199,36 @@ void process_maps(char *buf, int *global_mapping){
 	unsigned int old_text_start, old_text_end;
 	unsigned int new_text_start, new_text_end;
 
+	//Assume global mapping is first entry at 0x7000000 and that there is nothing before
+	//Skip global mapping
 	line = next_line(line);
 	do{ // process each block of maps
 		// process all segments from this object under very specific assumptions
-		if (is_exec(line) && is_write(line)){
-			// first exec and write segment must be the "global section"
-			//parse_range(line, &global_start, &global_end);
-			// jump to the old text segment
-			do{
-				line = next_line(line);
-			} while (!is_exec(line));
-			parse_range(line, &old_text_start, &old_text_end);
-
-			// jump to the new text segment
-			do{
-				line = next_line(line);
-			} while (!(is_exec(line) && is_write(line)));
-			parse_range(line, &new_text_start, &new_text_end);
-
-			populate_mapping(old_text_start, old_text_end, new_text_start, global_mapping);
+		if ( is_exec(line) ){
+			if( !is_write(line) ){
+				parse_range(line, &old_text_start, &old_text_end);
+			}else{
+				parse_range(line, &new_text_start, &new_text_end);
+				populate_mapping(old_text_start, old_text_end, new_text_start, global_mapping);
+			}
 		}
 		line = next_line(line);
 	} while(line != NULL);
 
 }
 
-/*
+#ifdef DEBUG
 int main(void){
-	int *global_mapping = (int *)0x09000000;
+	void *mapping_base = (void *)0x09000000;
+	int fd = open("./map_shell", O_RDWR);
+	void *global_mapping = mmap(mapping_base, 0x400000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+	if (global_mapping != mapping_base){
+		printf("failed to get requested base addr\n");
+		exit(1);
+	}
 	wrapper(global_mapping);
+
+	return 0;
 }
-*/
+#endif
 
