@@ -9,7 +9,7 @@ pat2 = re.compile('[ ]*push [0-9]+[ ]*')
 pat3 = re.compile('[ ]*mov eax, (d)?word ptr \[0x[0-9a-f]+\][ ]*')
 pat4 = re.compile('[ ]*mov eax, (dword ptr )?\[(?P<register>e[a-z][a-z])( )?[+-]( )?(0x)?[0-9a-f]+\][ ]*')
 pat5 = re.compile('(0x[0-9a-f]+|[0-9]+)')
-pat6 = re.compile('[ ]*add esp,(?P<amount>[0-9]*)[ ]*')
+pat6 = re.compile('[ ]*(?P<mnemonic>(add)|(sub)) (?P<register>(esp)|(ebx)),(?P<amount>[0-9]*)[ ]*')
 
 #jcxz and jecxz are removed because they don't have a large expansion
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -21,8 +21,8 @@ def _asm(text):
   if text in cache:
     return cache[text]
   else:
-    #with open('uncached.txt','a') as f:
-    #  f.write(text+'\n')
+    with open('uncached.txt','a') as f:
+      f.write(text+'\n')
     code = pwn.asm(text)
     cache[text] = code
     return code
@@ -93,18 +93,20 @@ def asm(text):
       #ocode = _asm(line)
       m = pat6.match(line)
       amount = int(m.group('amount'))
+      register = m.group('register')
+      mnemonic = m.group('mnemonic')
       if amount > 0x7f:
-        newcode = _asm('add esp,0x8f')
+        newcode = _asm('%s %s,0x8f'%(mnemonic,register) )
         newcode = newcode[:2] + struct.pack('<i',amount)
       else:
-        newcode = _asm('add esp,0x7f')
+        newcode = _asm('%s %s,0x7f'%(mnemonic,register) )
         newcode = newcode[:2] + struct.pack('<b',amount)
       #if newcode != ocode:
       #  print 'NO MATCH %s:\n%s\n%s'%(line,newcode.encode('hex'),ocode.encode('hex'))
       #  raise Exception
       code+=newcode
     else:
-        code+=_asm(line)
+      code+=_asm(line)
   return code
 
 def oldasm(text):

@@ -127,6 +127,20 @@ def get_indirect_uncond_code(ins,mapping,target):
   mov eax, %s
   %s
   '''
+  exec_call = '''
+  push %s
+  '''
+  so_call_before = '''
+  push ebx
+  call $+5
+  '''
+  so_call_after = '''
+  pop ebx
+  sub ebx,%s
+  sub ebx,%s
+  add ebx,%s
+  xchg ebx,[esp]
+  '''
   template_after = '''
   call $+%s
   mov [esp-4], eax
@@ -136,7 +150,16 @@ def get_indirect_uncond_code(ins,mapping,target):
   #TODO: This is somehow still the bottleneck, so this needs to be optimized
   code = b''
   if ins.mnemonic == 'call':
-    code = asm(template_before%(target,'push %s'%(ins.address+len(ins.bytes)) ))
+    if write_so:
+      code = asm( template_before%(target,so_call_before) )
+      if mapping is not None:
+        code+= asm(so_call_after%(mapping[ins.address]+len(code),newbase,ins.address+len(ins.bytes)) )
+        #print 'CODE LEN/1: %d\n%s'%(len(code),code.encode('hex'))
+      else:
+        code+= asm(so_call_after%(0x8f,newbase,ins.address+len(ins.bytes)) )
+        #print 'CODE LEN/0: %d\n%s'%(len(code),code.encode('hex'))
+    else:
+      code = asm(template_before%(target,exec_call%(ins.address+len(ins.bytes)) ))
   else:
     code = asm(template_before%(target,''))
   size = len(code)
@@ -249,7 +272,7 @@ def get_global_lookup_code():
   	mov eax,[%s+eax]
   	mov DWORD PTR [esp-32],eax
   	cmp eax, 0xffffffff
-  	jz failure
+  	jz abort
   	pop eax
         call [esp-36]
   	mov BYTE PTR [%s],0
@@ -263,6 +286,9 @@ def get_global_lookup_code():
 	ret
   failure:
   	hlt
+  abort:
+  	mov eax,1
+  	int 0x80
   '''
   #This is a dreadful workaround hack at the moment.  We hard code a single lookup function.
   #TODO: code a full global lookup implementation that somehow can find all local lookup functions
@@ -347,22 +373,31 @@ def translate_uncond(ins,mapping):
     return get_indirect_uncond_code(ins,mapping,target)
   elif op.type == X86_OP_IMM: # e.g. call 0xdeadbeef or jmp 0xcafebada
     target = op.imm
-    callback_code = b'' #If this ends up not being a plt call with callbacks, add no code
-    #if get_pc_thunk is not None and target == get_pc_thunk: #Special case for calls to thunk
-    #  print 'Found call to get_pc_thunk at 0x%x'%ins.address
-    #  thunk_ret = ins.address+len(ins.bytes) #Address directly after call instruction
-    #  #Replace the call with a mov instruction setting ebx to what WOULD have been the
-    #  #result in the original code, assuming that the original code is in its original place.
-    #  return asm('mov ebx,%s'%thunk_ret)
-    #if in_plt(target):
-    #  #print 'plt found @%s: %s %s'%(hex(ins.address),ins.mnemonic,ins.op_str)
-    #  entry = get_plt_entry(target)
-    #  if entry is not None and entry in callbacks.keys():
-    #    callback_code = get_callback_code(ins,mapping,entry)
+    code = b''
     if ins.mnemonic == 'call': #If it's a call, push the original address of the next instruction
-      #TODO: eventually get rid of callback checks and rename this (eventually we will modify all libs).
-      callback_code += asm('push %s'%(ins.address+len(ins.bytes)))
-    newtarget = remap_target(ins.address,mapping,target,len(callback_code))
+      exec_call = '''
+      push %s
+      '''
+      so_call_before = '''
+      push ebx
+      call $+5
+      '''
+      so_call_after = '''
+      pop ebx
+      sub ebx,%s
+      sub ebx,%s
+      add ebx,%s
+      xchg ebx,[esp]
+      '''
+      if write_so:
+        code+= asm(so_call_before)
+        if mapping is not None:
+          code+= asm(so_call_after%(mapping[ins.address]+len(code),newbase,ins.address+len(ins.bytes)) )
+        else:
+          code+= asm(so_call_after%(0x8f,newbase,ins.address+len(ins.bytes)) )
+      else:
+        code += asm(exec_call%(ins.address+len(ins.bytes)))
+    newtarget = remap_target(ins.address,mapping,target,len(code))
     #print "(pre)new length: %s"%len(callback_code)
     #print "target: %s"%hex(target)
     #print "newtarget: %s"%newtarget
@@ -370,13 +405,13 @@ def translate_uncond(ins,mapping):
     if len(patched) == 2: #Short encoding, which we do not want
       patched+='\x90\x90\x90' #Add padding of 3 NOPs
     #print "new length: %s"%len(callback_code+patched)
-    return callback_code+patched
+    return code+patched
   return None
 
 def translate_cond(ins,mapping):
   if ins.mnemonic in ['jcxz','jecxz']: #These instructions have no long encoding
     print "WARNING: encountered unhandled opcode %s"%ins.mnemonic
-    return None #TODO: handle special case for these instructions
+    return '\xf4\xf4\xf4\xf4\xf4' #TODO: handle special case for these instructions
   else:
     #print ins.mnemonic +' ' +ins.op_str
     #print dir(ins)
@@ -777,6 +812,8 @@ def renable(fname):
         if not write_so:
           bin_write.rewrite(fname,fname+'-r','newbytes',newbase,write_global_mapping_section(),global_lookup,newbase+new_entry_off)
         else:
+          global new_entry_off
+          new_entry_off = mapping[entry]
           bin_write.rewrite_noglobal(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
           
 '''
@@ -809,6 +846,7 @@ if __name__ == '__main__':
     #cProfile.run('renable(sys.argv[1])')
   elif len(sys.argv) == 3 and sys.argv[1] == '-so':
     write_so = True
+    #newbase = 0x100000
     renable(sys.argv[2])
   else:
     print "Error: must pass executable filename.\nCorrect usage: %s [-so] <filename>"%sys.argv[0]
