@@ -273,10 +273,15 @@ def get_global_lookup_code():
   	mov DWORD PTR [esp-32],eax
   	cmp eax, 0xffffffff
   	jz abort
+  	test eax,eax
+  	jz loader
   	pop eax
         call [esp-36]
   	mov BYTE PTR [%s],0
   	ret
+  loader:
+  	mov BYTE PTR [%s],0
+  	pop eax
   sysinfo:
   	push eax
   	mov eax,[esp+8]
@@ -293,7 +298,7 @@ def get_global_lookup_code():
   #This is a dreadful workaround hack at the moment.  We hard code a single lookup function.
   #TODO: code a full global lookup implementation that somehow can find all local lookup functions
   #return _asm(global_lookup_template%(global_sysinfo,global_sysinfo+4,newbase+lookup_off))
-  return _asm(global_lookup_template%(global_sysinfo,global_flag,global_flag,global_sysinfo+4,global_flag))
+  return _asm(global_lookup_template%(global_sysinfo,global_flag,global_flag,global_sysinfo+4,global_flag,global_flag))
 
 def get_auxvec_code(entry):
   #Example assembly for searching the auxiliary vector

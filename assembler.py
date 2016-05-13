@@ -10,6 +10,8 @@ pat3 = re.compile('[ ]*mov eax, (d)?word ptr \[0x[0-9a-f]+\][ ]*')
 pat4 = re.compile('[ ]*mov eax, (dword ptr )?\[(?P<register>e[a-z][a-z])( )?[+-]( )?(0x)?[0-9a-f]+\][ ]*')
 pat5 = re.compile('(0x[0-9a-f]+|[0-9]+)')
 pat6 = re.compile('[ ]*(?P<mnemonic>(add)|(sub)) (?P<register>(esp)|(ebx)),(?P<amount>[0-9]*)[ ]*')
+pat7 = re.compile('[ ]*mov eax, word ptr.*')#Match stupid size mismatch
+pat8 = re.compile('[ ]*mov eax, .x')#Match ridiculous register mismatch
 
 #jcxz and jecxz are removed because they don't have a large expansion
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -52,7 +54,7 @@ def asm(text):
     elif pat3.match(line):
       #mov eax, dword ptr [0xcafecafe]
       if ' word' in line:
-        print 'WARNING: silently converting "mov eax, word ptr [<number>]" to "mov eax, dword ptr [<number]"'
+        print 'WARNING: silently converting "mov eax, word ptr [<number>]" to "mov eax, dword ptr [<number>]"'
       code+=b'\xa1' + struct.pack('<I',int(line[line.find('[')+1:line.find(']')],16) )
     #Check for mov instruction to eax from some register plus or minus an offset
     #NOTE: This does NOT WORK for esp!  The instruction encoding pattern is DIFFERENT!
@@ -105,6 +107,12 @@ def asm(text):
       #  print 'NO MATCH %s:\n%s\n%s'%(line,newcode.encode('hex'),ocode.encode('hex'))
       #  raise Exception
       code+=newcode
+    elif pat7.match(line):
+      print 'WARNING: silently converting "mov eax, word ptr [<value>]" to "mov eax, dword ptr [<value>]"'
+      code+=_asm(line.replace(' word',' dword'))
+    elif pat8.match(line):
+      print 'WARNING: silently converting "mov eax, <letter>x" to "mov eax, e<letter>x"'
+      code+=_asm(line.replace(', ',', e'))
     else:
       code+=_asm(line)
   return code

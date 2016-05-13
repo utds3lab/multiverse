@@ -57,6 +57,7 @@ int _start(void *global_mapping){
 	buf[buf_size -1] = '\0'; // must null terminate
 
 #ifdef DEBUG
+	printf("READ:\n%s\n", buf);
 	// simulation for testing - dont call process maps
 	populate_mapping(0x08800000, 0x08880000, 0x07000000, global_mapping);
 	/*
@@ -180,13 +181,6 @@ void populate_mapping(unsigned int start, unsigned int end, unsigned int lookup_
 #ifdef DEBUG
 	printf("Wrote %d entries\n", i);
 #endif
-	/*
-	do{
-		global_mapping[index] = lookup_function;
-		index++;
-		start += 0x1000;
-	} while(start < end);
-	*/
 }
 
 void process_maps(char *buf, unsigned int *global_mapping){
@@ -214,7 +208,9 @@ void process_maps(char *buf, unsigned int *global_mapping){
 		}
 		line = next_line(line);
 	} while(line != NULL);
-
+	// assume the very last executable and non-writable segment is that of the dynamic linker (ld-X.X.so)
+	// populate those ranges with the value 0x00000000 which will be compared against in the global lookup function
+	populate_mapping(old_text_start, old_text_end, 0x00000000, global_mapping);
 }
 
 #ifdef DEBUG
