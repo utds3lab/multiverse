@@ -292,6 +292,7 @@ def get_global_lookup_code():
   failure:
   	hlt
   abort:
+  	hlt
   	mov eax,1
   	int 0x80
   '''
@@ -810,7 +811,7 @@ def renable(fname):
           print 'new entry point: %x'%new_entry_off
           print 'new _start point: %x'%mapping[entry]
           print 'global lookup: 0x%x'%global_lookup
-        with open('mapdump.json','wb') as f:
+        with open('%s-r-map.json'%fname,'wb') as f:
           json.dump(mapping,f)
         #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
         #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
