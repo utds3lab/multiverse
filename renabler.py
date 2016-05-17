@@ -292,7 +292,6 @@ def get_global_lookup_code():
   failure:
   	hlt
   abort:
-  	hlt
   	mov eax,1
   	int 0x80
   '''
@@ -415,25 +414,37 @@ def translate_uncond(ins,mapping):
   return None
 
 def translate_cond(ins,mapping):
+  patched = b''
   if ins.mnemonic in ['jcxz','jecxz']: #These instructions have no long encoding
-    print "WARNING: encountered unhandled opcode %s"%ins.mnemonic
-    return '\xf4\xf4\xf4\xf4\xf4' #TODO: handle special case for these instructions
-  else:
-    #print ins.mnemonic +' ' +ins.op_str
-    #print dir(ins)
-    #print ins.op_count()
-    #print ins.operands
+    jcxz_template = '''
+    test cx,cx
+    jz $+%s
+    '''
+    jecxz_template = '''
+    test ecx,ecx
+    jz $+%s
+    '''
     target = ins.operands[0].imm # int(ins.op_str,16) The destination of this instruction
     newtarget = remap_target(ins.address,mapping,target,0)
-    #print "target: %x remapped target: %s"%(target,newtarget)
-    patched = asm(ins.mnemonic + ' $+' + newtarget)
+    if ins.mnemonic == 'jcxz':
+      patched+=asm(jcxz_template%newtarget)
+    else:
+      patched+=asm(jecxz_template%newtarget)
     #TODO: some instructions encode to 6 bytes, some to 5, some to 2.  How do we know which?
     #For example, for CALL, it seems to only be 5 or 2 depending on offset.
     #But for jg, it can be 2 or 6 depending on offset, I think because it has a 2-byte opcode.
     while len(patched) < 6: #Short encoding, which we do not want
       patched+='\x90' #Add padding of NOPs
-    #print "(cond)new length: %s"%len(patched)
-    return patched
+  else:
+    target = ins.operands[0].imm # int(ins.op_str,16) The destination of this instruction
+    newtarget = remap_target(ins.address,mapping,target,0)
+    patched+=asm(ins.mnemonic + ' $+' + newtarget)
+    #TODO: some instructions encode to 6 bytes, some to 5, some to 2.  How do we know which?
+    #For example, for CALL, it seems to only be 5 or 2 depending on offset.
+    #But for jg, it can be 2 or 6 depending on offset, I think because it has a 2-byte opcode.
+    while len(patched) < 6: #Short encoding, which we do not want
+      patched+='\x90' #Add padding of NOPs
+  return patched
 
 def translate_ret(ins,mapping):
   '''
