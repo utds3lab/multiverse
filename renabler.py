@@ -11,6 +11,7 @@ import assembler
 import cProfile
 import bin_write
 import json
+import os
 
 #From Brian's Static_phase.py
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -55,6 +56,22 @@ popgm_offset = 0x8f
 new_entry_off = 0x8f
 write_so = False
 get_pc_thunk = None
+stat = {}
+stat['indcall'] = 0
+stat['indjmp'] = 0
+stat['dircall'] = 0
+stat['dirjmp'] = 0
+stat['jcc'] = 0
+stat['ret'] = 0
+stat['origtext'] = 0
+stat['newtext'] = 0
+stat['origfile'] = 0
+stat['newfile'] = 0
+stat['mapsize'] = 0
+stat['lookupsize'] = 0
+#stat['auxvecsize'] = 0
+#stat['globmapsize'] = 0
+#stat['globlookupsize'] = 0
 #List of library functions that have callback args; each function in the dict has a list of
 #the arguments passed to it that are a callback (measured as the index of which argument it is)
 #TODO: Handle more complex x64 calling convention
@@ -150,6 +167,7 @@ def get_indirect_uncond_code(ins,mapping,target):
   #TODO: This is somehow still the bottleneck, so this needs to be optimized
   code = b''
   if ins.mnemonic == 'call':
+    stat['indcall']+=1
     if write_so:
       code = asm( template_before%(target,so_call_before) )
       if mapping is not None:
@@ -161,6 +179,7 @@ def get_indirect_uncond_code(ins,mapping,target):
     else:
       code = asm(template_before%(target,exec_call%(ins.address+len(ins.bytes)) ))
   else:
+    stat['indjmp']+=1
     code = asm(template_before%(target,''))
   size = len(code)
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
@@ -380,6 +399,7 @@ def translate_uncond(ins,mapping):
     target = op.imm
     code = b''
     if ins.mnemonic == 'call': #If it's a call, push the original address of the next instruction
+      stat['dircall']+=1
       exec_call = '''
       push %s
       '''
@@ -402,6 +422,8 @@ def translate_uncond(ins,mapping):
           code+= asm(so_call_after%(0x8f,newbase,ins.address+len(ins.bytes)) )
       else:
         code += asm(exec_call%(ins.address+len(ins.bytes)))
+    else:
+      stat['dirjmp']+=1
     newtarget = remap_target(ins.address,mapping,target,len(code))
     #print "(pre)new length: %s"%len(callback_code)
     #print "target: %s"%hex(target)
@@ -414,6 +436,7 @@ def translate_uncond(ins,mapping):
   return None
 
 def translate_cond(ins,mapping):
+  stat['jcc']+=1
   patched = b''
   if ins.mnemonic in ['jcxz','jecxz']: #These instructions have no long encoding
     jcxz_template = '''
@@ -466,6 +489,7 @@ def translate_ret(ins,mapping):
   mov eax, [esp-%d]
   jmp [esp-4]
   '''
+  stat['ret']+=1
   code = asm(template_before)
   size = len(code)
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
@@ -818,20 +842,34 @@ def renable(fname):
 		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
         if 0x804ac40 in mapping:
 		print 'bzip2 only: snocString at 0x%x'%mapping[0x804ac40]
+        global new_entry_off
         if not write_so:
           print 'new entry point: %x'%new_entry_off
           print 'new _start point: %x'%mapping[entry]
           print 'global lookup: 0x%x'%global_lookup
         with open('%s-r-map.json'%fname,'wb') as f:
           json.dump(mapping,f)
-        #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+mapping[entry])
-        #bin_write.rewrite(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
         if not write_so:
           bin_write.rewrite(fname,fname+'-r','newbytes',newbase,write_global_mapping_section(),global_lookup,newbase+new_entry_off)
         else:
-          global new_entry_off
           new_entry_off = mapping[entry]
           bin_write.rewrite_noglobal(fname,fname+'-r','newbytes',newbase,newbase+new_entry_off)
+        stat['origtext'] = len(bytes)
+        stat['newtext'] = len(newbytes)
+        stat['origfile'] = os.path.getsize(fname)
+        stat['newfile'] = os.path.getsize(fname+'-r')
+        stat['mapsize'] = len(maptext)
+        stat['lookupsize'] = \
+          len(get_lookup_code(base,len(bytes),mapping[lookup_function_offset],mapping[mapping_offset]))
+        if not write_so:
+          stat['auxvecsize'] = len(get_auxvec_code(mapping[entry]))
+          with open(popgm) as f:
+            tmp=f.read()
+            stat['popgmsize'] = len(tmp)
+          stat['globmapsectionsize'] = len(write_global_mapping_section())
+          stat['globlookupsize'] = len(get_global_lookup_code())
+        with open('%s-r-stat.json'%fname,'wb') as f:
+          json.dump(stat,f,sort_keys=True,indent=4,separators=(',',': '))
           
 '''
   with open(fname,'rb') as f:
