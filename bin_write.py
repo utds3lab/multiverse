@@ -4,7 +4,7 @@ from ELFManip import ELFManip, Custom_Section, Custom_Segment
 from Constants import PT_LOAD
 
 def rewrite_noglobal(fname,nname,newcode,newbase,entry):
-  elf = ELFManip(fname)
+  elf = ELFManip(fname,num_adtl_segments=1)
   with open(newcode) as f:
     newbytes = f.read()
     elf.relocate_phdrs()
@@ -18,7 +18,7 @@ def rewrite_noglobal(fname,nname,newcode,newbase,entry):
     elf.write_new_elf(nname)
 
 def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry):
-  elf = ELFManip(fname)
+  elf = ELFManip(fname,num_adtl_segments=2)
   with open(newcode) as f:
     newbytes = f.read()
     elf.relocate_phdrs()

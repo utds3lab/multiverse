@@ -50,11 +50,12 @@ int _start(void *global_mapping){
 	unsigned int buf_size = 0x1000;
 	char buf[buf_size];
 	int proc_maps_fd;
+	int cnt;
 
 
 	proc_maps_fd = my_open((char *) &maps_path);
-	my_read(proc_maps_fd, buf, buf_size);
-	buf[buf_size -1] = '\0'; // must null terminate
+	cnt = my_read(proc_maps_fd, buf, buf_size);
+	buf[cnt] = '\0';// must null terminate
 
 #ifdef DEBUG
 	printf("READ:\n%s\n", buf);

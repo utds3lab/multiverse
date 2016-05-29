@@ -311,6 +311,7 @@ def get_global_lookup_code():
   failure:
   	hlt
   abort:
+  	hlt
   	mov eax,1
   	int 0x80
   '''
@@ -378,10 +379,12 @@ def get_auxvec_code(entry):
   restore:
 	mov esi,[esp-4]
 	mov ecx,[esp-8]
+  	pushad
   	push %s
-  	mov DWORD PTR [esp-12], %s
-  	call [esp-12]
+  	mov DWORD PTR [esp-36], %s
+  	call [esp-36]
   	add esp,4
+        popad
   	mov DWORD PTR [esp-12], %s
 	jmp [esp-12]
   '''
@@ -816,6 +819,9 @@ def renable(fname):
         #  output+='%s:%s '%(key,tmpdct[key])
         with open('newbytes','wb') as f2:
           f2.write(newbytes)
+        if not write_so:
+          with open('newglobal','wb') as f2:
+            f2.write(write_global_mapping_section())
         #print output
         print mapping[base]
         print mapping[base+1]
