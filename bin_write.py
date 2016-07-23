@@ -1,7 +1,7 @@
-import sys
-sys.path.insert(0,'/home/erick/git/delinker/Delinker/src')
-from ELFManip import ELFManip, Custom_Section, Custom_Segment
-from Constants import PT_LOAD
+#import sys
+#sys.path.insert(0,'/home/erick/git/delinker/Delinker/src')
+from elfmanip.ELFManip import ELFManip, Custom_Section, Custom_Segment
+from elfmanip.Constants import PT_LOAD
 
 def rewrite_noglobal(fname,nname,newcode,newbase,entry):
   elf = ELFManip(fname,num_adtl_segments=1)
