@@ -11,7 +11,7 @@ pat4 = re.compile('[ ]*mov eax, (dword ptr )?\[(?P<register>e[a-z][a-z])( )?[+-]
 pat5 = re.compile('(0x[0-9a-f]+|[0-9]+)')
 pat6 = re.compile('[ ]*(?P<mnemonic>(add)|(sub)) (?P<register>(esp)|(ebx)),(?P<amount>[0-9]*)[ ]*')
 pat7 = re.compile('[ ]*mov eax, word ptr.*')#Match stupid size mismatch
-pat8 = re.compile('[ ]*mov eax, .x')#Match ridiculous register mismatch
+pat8 = re.compile('[ ]*mov eax, .[xi]')#Match ridiculous register mismatch
 
 #jcxz and jecxz are removed because they don't have a large expansion
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -111,7 +111,7 @@ def asm(text):
       print 'WARNING: silently converting "mov eax, word ptr [<value>]" to "mov eax, dword ptr [<value>]"'
       code+=_asm(line.replace(' word',' dword'))
     elif pat8.match(line):
-      print 'WARNING: silently converting "mov eax, <letter>x" to "mov eax, e<letter>x"'
+      print 'WARNING: silently converting "mov eax, <letter>[xi]" to "mov eax, e<letter>[xi]"'
       code+=_asm(line.replace(', ',', e'))
     else:
       code+=_asm(line)
