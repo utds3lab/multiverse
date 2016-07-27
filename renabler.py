@@ -282,9 +282,9 @@ def get_global_lookup_code():
   	cmp eax,[%s]
   	jz sysinfo
   glookup:
-  	cmp BYTE PTR[%s],1
+  	cmp BYTE PTR [gs:%s],1
   	jz failure
-  	mov BYTE PTR [%s],1
+  	mov BYTE PTR [gs:%s],1
   	push eax
   	shr eax,12
   	shl eax,2
@@ -296,10 +296,10 @@ def get_global_lookup_code():
   	jz loader
   	pop eax
         call [esp-36]
-  	mov BYTE PTR [%s],0
+  	mov BYTE PTR [gs:%s],0
   	ret
   loader:
-  	mov BYTE PTR [%s],0
+  	mov BYTE PTR [gs:%s],0
   	pop eax
   sysinfo:
   	push eax
@@ -649,10 +649,12 @@ def gen_mapping(md,bytes,base):
     #another section.  TODO: put this somewhere else
     global global_sysinfo
     global global_flag
-    #The first time, sysinfo's location is unknown,
-    #so it is wrong in the call to get_global_lookup_code
-    global_flag = global_lookup + len(get_global_lookup_code())
-    global_sysinfo = global_flag+1 #Global flag is only one byte
+    #The first time, sysinfo's and flag's location is unknown,
+    #so they are wrong in the first call to get_global_lookup_code
+    #However, the global_flag is moving to a TLS section, so it takes
+    #up no space in the global lookup
+    #global_flag = global_lookup + len(get_global_lookup_code())
+    global_sysinfo = global_lookup + len(get_global_lookup_code())
     #Now that this is set, the auxvec code should work
   return mapping
 
@@ -741,7 +743,7 @@ def gen_newcode(md,bytes,base,mapping,entry):
 
 def write_global_mapping_section():
   globalbytes = get_global_lookup_code()
-  globalbytes+='\0' #flag field
+  #globalbytes+='\0' #flag field
   globalbytes+='\0\0\0\0' #sysinfo field
   #Global mapping (0x3ffff8 0xff bytes) ending at kernel addresses.  Note it is NOT ending
   #at 0xc0000000 because this boundary is only true for 32-bit kernels.  For 64-bit kernels,
@@ -799,6 +801,13 @@ def renable(fname):
         base = seg.header['p_vaddr']
         mapping = gen_mapping(md,bytes,base)
         newbytes = gen_newcode(md,bytes,base,mapping,entry)
+        #Perhaps I could find a better location to set the value of global_flag
+        #(which is the offset from gs)
+        #I only need one byte for the global flag, so I am adding a tiny bit to TLS
+        #add_tls_section returns the offset, but we must make it negative
+        global global_flag
+        global_flag = -bin_write.add_tls_section(fname,b'\0')
+        print 'just set global_flag value to %d'%global_flag
         #maptext = write_mapping(mapping,base,len(bytes))
         #(mapping,newbytes) = translate_all(seg.data(),seg.header['p_vaddr'])
         #insts = md.disasm(newbytes[0x8048360-seg.header['p_vaddr']:0x8048441-seg.header['p_vaddr']],0x8048360)
