@@ -47,15 +47,19 @@ int _start(void *global_mapping){
 			0x00737061,
 	};
 
-	unsigned int buf_size = 0x1000;
+	unsigned int buf_size = 0x10000;
 	char buf[buf_size];
 	int proc_maps_fd;
-	int cnt;
+	int cnt, offset = 0;
 
 
 	proc_maps_fd = my_open((char *) &maps_path);
 	cnt = my_read(proc_maps_fd, buf, buf_size);
-	buf[cnt] = '\0';// must null terminate
+        while( cnt != 0 && offset < buf_size ){
+                offset += cnt;
+        	cnt = my_read(proc_maps_fd, buf+offset, buf_size-offset);
+	}
+	buf[offset] = '\0';// must null terminate
 
 #ifdef DEBUG
 	printf("READ:\n%s\n", buf);
