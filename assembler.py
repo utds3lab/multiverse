@@ -111,7 +111,7 @@ def asm(text):
       print 'WARNING: silently converting "mov eax, word ptr [<value>]" to "mov eax, dword ptr [<value>]"'
       code+=_asm(line.replace(' word',' dword'))
     elif pat8.match(line):
-      print 'WARNING: silently converting "mov eax, <letter>[xi]" to "mov eax, e<letter>[xi]"'
+      print 'WARNING: silently converting "mov eax, <letter>[xip]" to "mov eax, e<letter>[xip]"'
       code+=_asm(line.replace(', ',', e'))
     else:
       code+=_asm(line)

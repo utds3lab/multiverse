@@ -753,6 +753,17 @@ def write_global_mapping_section():
   globalbytes+='\xff'*((0xffffe000>>12)<<2) 
   return globalbytes
 
+#Find the earliest address we can place the new code
+def find_newbase(elffile):
+  maxaddr = 0
+  for seg in elffile.iter_segments():
+    segend = seg.header['p_vaddr']+seg.header['p_memsz']
+    if segend > maxaddr:
+      maxaddr = segend
+  maxaddr += ( 0x1000 - maxaddr%0x1000 ) # Align to page boundary
+  return maxaddr
+
+
 def renable(fname):
   offs = size = addr = 0
   with open(fname,'rb') as f:
@@ -792,7 +803,10 @@ def renable(fname):
           plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
     else:
         print 'binary does not contain plt'
-    print plt
+    #print plt
+    if write_so:
+      global newbase
+      newbase = find_newbase(elffile)
     for seg in elffile.iter_segments():
       if seg.header['p_flags'] == 5 and seg.header['p_type'] == 'PT_LOAD': #Executable load seg
         print "Base address: %s"%hex(seg.header['p_vaddr'])
