@@ -11,7 +11,7 @@ pat4 = re.compile('[ ]*mov eax, (dword ptr )?\[(?P<register>e[a-z][a-z])( )?[+-]
 pat5 = re.compile('(0x[0-9a-f]+|[0-9]+)')
 pat6 = re.compile('[ ]*(?P<mnemonic>(add)|(sub)) (?P<register>(esp)|(ebx)),(?P<amount>[0-9]*)[ ]*')
 pat7 = re.compile('[ ]*mov eax, word ptr.*')#Match stupid size mismatch
-pat8 = re.compile('[ ]*mov eax, .[xi]')#Match ridiculous register mismatch
+pat8 = re.compile('[ ]*mov eax, .[xip]')#Match ridiculous register mismatch
 
 #jcxz and jecxz are removed because they don't have a large expansion
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
