@@ -413,16 +413,17 @@ def translate_uncond(ins,mapping):
       so_call_after = '''
       pop ebx
       sub ebx,%s
-      sub ebx,%s
       add ebx,%s
       xchg ebx,[esp]
       '''
       if write_so:
         code+= asm(so_call_before)
         if mapping is not None:
-          code+= asm(so_call_after%(mapping[ins.address]+len(code),newbase,ins.address+len(ins.bytes)) )
+          # Note that if somehow newbase is a very small value we could have problems with the small
+          # encoding of sub.  This could result in different lengths between the mapping and code gen phases
+          code+= asm(so_call_after%(newbase + (mapping[ins.address]+len(code)),ins.address+len(ins.bytes)) )
         else:
-          code+= asm(so_call_after%(0x8f,newbase,ins.address+len(ins.bytes)) )
+          code+= asm(so_call_after%(newbase,ins.address+len(ins.bytes)) )
       else:
         code += asm(exec_call%(ins.address+len(ins.bytes)))
     else:
@@ -511,7 +512,7 @@ def translate_one(ins,mapping):
   elif ins.mnemonic == 'ret':
     return translate_ret(ins,mapping)
   elif ins.mnemonic in ['retn','retf','repz']: #I think retn is not used in Capstone
-    print 'WARNING: unimplemented %s %s'%(ins.mnemonic,ins.op_str)
+    #print 'WARNING: unimplemented %s %s'%(ins.mnemonic,ins.op_str)
     return '\xf4\xf4\xf4\xf4' #Create obvious cluster of hlt instructions
   else: #Any other instruction
     return None #No translation needs to be done
