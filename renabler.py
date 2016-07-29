@@ -379,16 +379,13 @@ def get_auxvec_code(entry):
   restore:
 	mov esi,[esp-4]
 	mov ecx,[esp-8]
-  	pushad
   	push %s
-  	mov DWORD PTR [esp-36], %s
-  	call [esp-36]
+  	call [esp]
   	add esp,4
-        popad
   	mov DWORD PTR [esp-12], %s
 	jmp [esp-12]
   '''
-  return _asm(auxvec_template%(global_sysinfo,global_sysinfo+4,newbase+popgm_offset,newbase+entry))
+  return _asm(auxvec_template%(global_sysinfo,global_lookup+popgm_offset,newbase+entry))
 
 def translate_uncond(ins,mapping):
   op = ins.operands[0] #Get operand
@@ -638,10 +635,6 @@ def gen_mapping(md,bytes,base):
     global new_entry_off
     new_entry_off = offset
     offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
-    global popgm_offset
-    popgm_offset = offset
-    with open(popgm) as f:
-      offset+=len(f.read()) #Add offset of popgm, as it will be placed after auxvec
   mapping[0] = 0
   #Don't yet know mapping offset; we must compute it
   mapping[len(bytes)+base] = offset
@@ -655,7 +648,10 @@ def gen_mapping(md,bytes,base):
     #However, the global_flag is moving to a TLS section, so it takes
     #up no space in the global lookup
     #global_flag = global_lookup + len(get_global_lookup_code())
-    global_sysinfo = global_lookup + len(get_global_lookup_code())
+    #popgm goes directly after the global lookup, and global_sysinfo directly after that.
+    global popgm_offset
+    popgm_offset = len(get_global_lookup_code())
+    global_sysinfo = global_lookup + popgm_offset + len(write_popgm())
     #Now that this is set, the auxvec code should work
   return mapping
 
@@ -735,16 +731,28 @@ def gen_newcode(md,bytes,base,mapping,entry):
     '''
   if not write_so:
     newbytes+=get_auxvec_code(mapping[entry])
-    #Append popgm functions after auxvec code
-    with open(popgm) as f:
-      newbytes+=f.read()
   #Append mapping to end of bytes
   newbytes+=write_mapping(mapping,base,len(bytes))
   return newbytes
 
+def write_popgm():
+  call_popgm = '''
+  pushad
+  push %s
+  call $+0xa
+  add esp,4
+  popad
+  ret
+  '''
+  popgmbytes = asm(call_popgm%(global_sysinfo+4))
+  with open(popgm) as f:
+      popgmbytes+=f.read()
+  return popgmbytes
+
 def write_global_mapping_section():
   globalbytes = get_global_lookup_code()
   #globalbytes+='\0' #flag field
+  globalbytes+=write_popgm()
   globalbytes+='\0\0\0\0' #sysinfo field
   #Global mapping (0x3ffff8 0xff bytes) ending at kernel addresses.  Note it is NOT ending
   #at 0xc0000000 because this boundary is only true for 32-bit kernels.  For 64-bit kernels,
@@ -804,13 +812,12 @@ def renable(fname):
     else:
         print 'binary does not contain plt'
     #print plt
+    global newbase
     if write_so:
       print 'Writing as .so file'
-      global newbase
       newbase = find_newbase(elffile)
     else:
       print 'Writing as main binary'
-      global newbase
       newbase = 0x09000000
     for seg in elffile.iter_segments():
       if seg.header['p_flags'] == 5 and seg.header['p_type'] == 'PT_LOAD': #Executable load seg
