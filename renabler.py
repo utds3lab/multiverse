@@ -805,8 +805,13 @@ def renable(fname):
         print 'binary does not contain plt'
     #print plt
     if write_so:
+      print 'Writing as .so file'
       global newbase
       newbase = find_newbase(elffile)
+    else:
+      print 'Writing as main binary'
+      global newbase
+      newbase = 0x09000000
     for seg in elffile.iter_segments():
       if seg.header['p_flags'] == 5 and seg.header['p_type'] == 'PT_LOAD': #Executable load seg
         print "Base address: %s"%hex(seg.header['p_vaddr'])
@@ -822,7 +827,7 @@ def renable(fname):
         #add_tls_section returns the offset, but we must make it negative
         global global_flag
         global_flag = -bin_write.add_tls_section(fname,b'\0')
-        print 'just set global_flag value to %d'%global_flag
+        print 'just set global_flag value to 0x%x'%global_flag
         #maptext = write_mapping(mapping,base,len(bytes))
         #(mapping,newbytes) = translate_all(seg.data(),seg.header['p_vaddr'])
         #insts = md.disasm(newbytes[0x8048360-seg.header['p_vaddr']:0x8048441-seg.header['p_vaddr']],0x8048360)
