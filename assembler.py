@@ -32,6 +32,8 @@ def _asm(text):
 def asm(text):
   code = b''
   for line in text.split('\n'):
+    if not line.find(';') == -1:
+      line = line[:line.find(';')]#Eliminate comments
     #Check for offsets ($+)
     match = pat.search(line)
     if match and match.group() != '$+0x8f':

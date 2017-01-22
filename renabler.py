@@ -154,8 +154,6 @@ def get_indirect_uncond_code(ins,mapping,target):
   so_call_after = '''
   pop ebx
   sub ebx,%s
-  sub ebx,%s
-  add ebx,%s
   xchg ebx,[esp]
   '''
   template_after = '''
@@ -171,10 +169,10 @@ def get_indirect_uncond_code(ins,mapping,target):
     if write_so:
       code = asm( template_before%(target,so_call_before) )
       if mapping is not None:
-        code+= asm(so_call_after%(mapping[ins.address]+len(code),newbase,ins.address+len(ins.bytes)) )
+        code+= asm(so_call_after%( (mapping[ins.address]+len(code)+newbase) - (ins.address+len(ins.bytes)) ) )
         #print 'CODE LEN/1: %d\n%s'%(len(code),code.encode('hex'))
       else:
-        code+= asm(so_call_after%(0x8f,newbase,ins.address+len(ins.bytes)) )
+        code+= asm(so_call_after%( (0x8f+newbase) - (ins.address+len(ins.bytes)) ) )
         #print 'CODE LEN/0: %d\n%s'%(len(code),code.encode('hex'))
     else:
       code = asm(template_before%(target,exec_call%(ins.address+len(ins.bytes)) ))
@@ -410,7 +408,6 @@ def translate_uncond(ins,mapping):
       so_call_after = '''
       pop ebx
       sub ebx,%s
-      add ebx,%s
       xchg ebx,[esp]
       '''
       if write_so:
@@ -418,9 +415,9 @@ def translate_uncond(ins,mapping):
         if mapping is not None:
           # Note that if somehow newbase is a very small value we could have problems with the small
           # encoding of sub.  This could result in different lengths between the mapping and code gen phases
-          code+= asm(so_call_after%(newbase + (mapping[ins.address]+len(code)),ins.address+len(ins.bytes)) )
+          code+= asm(so_call_after%( (newbase+(mapping[ins.address]+len(code))) - (ins.address+len(ins.bytes)) ) )
         else:
-          code+= asm(so_call_after%(newbase,ins.address+len(ins.bytes)) )
+          code+= asm(so_call_after%( (newbase) - (ins.address+len(ins.bytes)) ) )
       else:
         code += asm(exec_call%(ins.address+len(ins.bytes)))
     else:
