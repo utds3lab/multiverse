@@ -12,6 +12,7 @@ import cProfile
 import bin_write
 import json
 import os
+import re
 
 #From Brian's Static_phase.py
 JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
@@ -28,6 +29,8 @@ mov %s, DWORD PTR [esp%s]
 save_register = '''
 mov %s, -12
 mov %s, %s'''
+
+memory_ref_string = re.compile(u'^dword ptr \[(?P<address>0x[0-9a-z]+)\]$')
 
 '''
 call X
@@ -55,6 +58,7 @@ popgm = 'popgm'
 popgm_offset = 0x8f
 new_entry_off = 0x8f
 write_so = False
+exec_only = False
 get_pc_thunk = None
 stat = {}
 stat['indcall'] = 0
@@ -128,6 +132,17 @@ def get_callback_code(ins,mapping,name):
   code+=asm(restore_eax)
   return code
 
+def get_remap_callbacks_code(target):
+  '''Checks whether the target destination (expressed as the opcode string from a jmp/call instruction)
+     is in the got, then checks if it matches a function with callbacks.  It then rewrites the
+     addresses if necessary.  This will *probably* always be from jmp instructions in the PLT.'''
+  if memory_ref_string.match(target):
+    address = int(memory_ref_string.match(target).group('address'), 16)
+    if address in plt['entries']:
+      if plt['entries'][address] in callbacks:
+        print 'Found library call with callbacks: %s'%plt['entries'][address]
+  return b''
+
 def get_indirect_uncond_code(ins,mapping,target):
   #Commented assembly
   '''
@@ -164,6 +179,8 @@ def get_indirect_uncond_code(ins,mapping,target):
   '''
   #TODO: This is somehow still the bottleneck, so this needs to be optimized
   code = b''
+  if exec_only:
+    get_remap_callbacks_code(target)
   if ins.mnemonic == 'call':
     stat['indcall']+=1
     if write_so:
@@ -253,6 +270,32 @@ def get_lookup_code(base,size,lookup_off,mapping_off):
   exec_restore = '''
   	add ebx,%s
   '''
+  exec_only_lookup = '''
+  lookup:
+	push ebx
+	mov ebx,eax
+	call get_eip
+  get_eip:
+	pop eax
+	sub eax,%s
+	sub ebx,%s
+	jb outside
+	cmp ebx,%s
+	jae outside
+	mov ebx,[eax+ebx*4+%s]
+	add eax,ebx
+	pop ebx
+	ret
+
+  outside:
+	add ebx,%s
+	mov eax,[esp+8]
+	call lookup
+	mov [esp+8],eax
+	mov eax,ebx
+	pop ebx
+	ret
+  '''
   #For an .so, it can be loaded at an arbitrary address, so we cannot depend on
   #the base address being in a fixed location.  Therefore, we instead compute 
   #the old text section's start address by using the new text section's offset
@@ -272,6 +315,8 @@ def get_lookup_code(base,size,lookup_off,mapping_off):
   #retrieve eip 8 bytes after start of lookup function
   if write_so:
     return _asm(lookup_template%(lookup_off+8,so_code%(newbase,newbase),size,mapping_off,so_restore%(newbase,newbase),global_lookup))
+  elif exec_only:
+    return _asm( exec_only_lookup%(lookup_off+8,base,size,mapping_off,base) )
   else:
     return _asm(lookup_template%(lookup_off+8,exec_code%base,size,mapping_off,exec_restore%base,global_lookup))
 
@@ -813,6 +858,9 @@ def renable(fname):
     if write_so:
       print 'Writing as .so file'
       newbase = find_newbase(elffile)
+    elif exec_only:
+      print 'Writing ONLY main binary, without support for rewritten .so files'
+      newbase = 0x09000000
     else:
       print 'Writing as main binary'
       newbase = 0x09000000
@@ -942,5 +990,8 @@ if __name__ == '__main__':
     write_so = True
     #newbase = 0x100000
     renable(sys.argv[2])
+  elif len(sys.argv) == 3 and sys.argv[1] == '-execonly':
+    exec_only = True
+    renable(sys.argv[2])
   else:
-    print "Error: must pass executable filename.\nCorrect usage: %s [-so] <filename>"%sys.argv[0]
+    print "Error: must pass executable filename.\nCorrect usage: %s [-so/-execonly] <filename>"%sys.argv[0]
