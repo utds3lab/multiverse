@@ -110,29 +110,35 @@ def get_plt_entry(target):
     return plt['entries'][dest] #If there is an entry, return that; the name of the function
   return None #Some entries may be a jump to the start of the plt (no entry)
 
-def get_callback_code(ins,mapping,name):
-  print 'call with callback found'
-  #TODO: Why -12?  Is this general?
-  save_eax = save_reg_template%('-16','eax')
+def get_callback_code(address,mapping,cbargs):
+  '''Remaps each callback argument on the stack based on index.  cbargs is an array of argument indices
+     that let us know where on the stack we must rewrite.  We insert code for each we must rewrite.'''
   callback_template_before = '''
-  mov eax, [esp+(%s*4)]'''
+  mov eax, [esp+(%s*4)]
+  '''
   callback_template_after = '''
   call $+%s
   mov [esp+(%s*4)], eax
   '''
-  code = asm(save_eax) #Assemble the code to save eax
-  for ind in callbacks[name]: #For each callback parameter in the stack
-    cb_before = callback_template_before%ind
-    code+=asm(cb_before) #Assemble the code to save the value at that stack offset to eax
-    size=len(code) #Since jmp/call is relative, need the address we're coming from
-    lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
-    cb_after = callback_template_after%(lookup_target,ind)
-    code+=asm(cb_after)
-  restore_eax = restore_reg_template%('eax','-16')
-  code+=asm(restore_eax)
+  code = asm('push eax') #Save eax, use to hold callback address
+  for ind in cbargs:
+    #Add 2 because we must skip over the saved value of eax and the return value already pushed
+    #ASSUMPTION: before this instruction OR this instruction if it IS a call, a return address was
+    #pushed.  Since this *probably* is taking place inside the PLT, in all probability this is a
+    #jmp instruction, and the call that got us *into* the PLT pushed a return address, so we can't rely
+    #on the current instruction to tell us this either way.  Therefore, we are *assuming* that the PLT
+    #is always entered via a call instruction, or that somebody is calling an address in the GOT directly.
+    #If code ever jmps based on an address in the got, we will probably corrupt the stack.
+    cb_before = callback_template_before%( ind + 2 )
+    code += asm(cb_before) #Assemble this part first so we will know the offset to the lookup function
+    size = len(code)
+    lookup_target = remap_target( address, mapping, lookup_function_offset, size )
+    cb_after = callback_template_after%( lookup_target, ind + 2 )
+    code += asm(cb_after) #Save the new address over the original
+  code += asm('pop eax') #Restore eax
   return code
 
-def get_remap_callbacks_code(target):
+def get_remap_callbacks_code(insaddr,mapping,target):
   '''Checks whether the target destination (expressed as the opcode string from a jmp/call instruction)
      is in the got, then checks if it matches a function with callbacks.  It then rewrites the
      addresses if necessary.  This will *probably* always be from jmp instructions in the PLT.'''
@@ -141,6 +147,7 @@ def get_remap_callbacks_code(target):
     if address in plt['entries']:
       if plt['entries'][address] in callbacks:
         print 'Found library call with callbacks: %s'%plt['entries'][address]
+        return get_callback_code( insaddr, mapping, callbacks[plt['entries'][address]] )
   return b''
 
 def get_indirect_uncond_code(ins,mapping,target):
@@ -180,11 +187,11 @@ def get_indirect_uncond_code(ins,mapping,target):
   #TODO: This is somehow still the bottleneck, so this needs to be optimized
   code = b''
   if exec_only:
-    get_remap_callbacks_code(target)
+    code += get_remap_callbacks_code(ins.address,mapping,target)
   if ins.mnemonic == 'call':
     stat['indcall']+=1
     if write_so:
-      code = asm( template_before%(target,so_call_before) )
+      code += asm( template_before%(target,so_call_before) )
       if mapping is not None:
         code+= asm(so_call_after%( (mapping[ins.address]+len(code)+newbase) - (ins.address+len(ins.bytes)) ) )
         #print 'CODE LEN/1: %d\n%s'%(len(code),code.encode('hex'))
@@ -192,10 +199,10 @@ def get_indirect_uncond_code(ins,mapping,target):
         code+= asm(so_call_after%( (0x8f+newbase) - (ins.address+len(ins.bytes)) ) )
         #print 'CODE LEN/0: %d\n%s'%(len(code),code.encode('hex'))
     else:
-      code = asm(template_before%(target,exec_call%(ins.address+len(ins.bytes)) ))
+      code += asm(template_before%(target,exec_call%(ins.address+len(ins.bytes)) ))
   else:
     stat['indjmp']+=1
-    code = asm(template_before%(target,''))
+    code += asm(template_before%(target,''))
   size = len(code)
   lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
   #Always transform an unconditional control transfer to a jmp, but
@@ -206,9 +213,9 @@ def get_indirect_uncond_code(ins,mapping,target):
   #20 bytes, which will obliterate anything stored too close to the stack pointer.  That, plus
   #the return value we push on the stack, means we need to put it at least 28 bytes away.
   if ins.mnemonic == 'call':
-    code+=asm(template_after%(lookup_target,28))
+    code += asm(template_after%(lookup_target,28))
   else:  
-    code+=asm(template_after%(lookup_target,32))
+    code += asm(template_after%(lookup_target,32))
   return code
 
 def get_lookup_code(base,size,lookup_off,mapping_off):
