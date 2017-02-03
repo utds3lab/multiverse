@@ -50,6 +50,7 @@ plt = {}
 newbase = 0x09000000
 #TODO: Set actual address of function
 lookup_function_offset = 0x8f
+secondary_lookup_function_offset = 0x8f #ONLY used when rewriting ONLY main executable
 mapping_offset = 0x8f
 global_sysinfo = 0x8f	#Address containing sysinfo's address
 global_flag = 0x8f
@@ -327,6 +328,38 @@ def get_lookup_code(base,size,lookup_off,mapping_off):
   else:
     return _asm(lookup_template%(lookup_off+8,exec_code%base,size,mapping_off,exec_restore%base,global_lookup))
 
+def get_secondary_lookup_code(base,size,sec_lookup_off,mapping_off):
+  '''This secondary lookup is only used when rewriting only the main executable.  It is a second, simpler
+     lookup function that is used by ret instructions and does NOT rewrite a return address on the stack
+     when the destination is outside the mapping.  It instead simply returns the original address and that's
+     it.  The only reason I'm doing this by way of a secondary lookup is this should be faster than a
+     a parameter passed at runtime, so I need to statically have an offset to jump to in the case of returns.
+     This is a cleaner way to do it than split the original lookup to have two entry points.'''
+  secondary_lookup = '''
+  lookup:
+	push ebx
+	mov ebx,eax
+	call get_eip
+  get_eip:
+	pop eax
+	sub eax,%s
+	sub ebx,%s
+	jb outside
+	cmp ebx,%s
+	jae outside
+	mov ebx,[eax+ebx*4+%s]
+	add eax,ebx
+	pop ebx
+	ret
+
+  outside:
+	add ebx,%s
+	mov eax,ebx
+	pop ebx
+	ret
+  '''
+  return _asm( secondary_lookup%(sec_lookup_off+8,base,size,mapping_off,base) )
+
 def get_global_lookup_code():
   global_lookup_template = '''
   	cmp eax,[%s]
@@ -542,7 +575,12 @@ def translate_ret(ins,mapping):
   stat['ret']+=1
   code = asm(template_before)
   size = len(code)
-  lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
+  lookup_target = b''
+  if exec_only:
+    #Special lookup for not rewriting arguments when going outside new main text address space
+    lookup_target = remap_target(ins.address,mapping,secondary_lookup_function_offset,size)
+  else:
+    lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
   if ins.op_str == '':
     code+=asm(template_after%(lookup_target,'',32)) #32 because of the value we popped
   else: #For ret instructions that pop imm16 bytes from the stack, add that many bytes to esp
@@ -672,6 +710,11 @@ def gen_mapping(md,bytes,base):
   lookup_function_offset = 0 #Place lookup function at start of new text section
   lookup_size = len(get_lookup_code(base,len(bytes),0,0x8f)) #TODO: Issue with mapping offset & size
   offset = lookup_size
+  if exec_only:
+    global secondary_lookup_function_offset
+    secondary_lookup_function_offset = offset
+    secondary_lookup_size = len(get_secondary_lookup_code(base,len(bytes),offset,0x8f))
+    offset += secondary_lookup_size
   for m in maplist:
     for k in sorted(m.keys()):
       size = m[k]
@@ -684,7 +727,12 @@ def gen_mapping(md,bytes,base):
     global new_entry_off
     new_entry_off = offset
     offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
-  mapping[0] = 0
+  mapping[lookup_function_offset] = lookup_function_offset
+  if exec_only:
+    #This is a very low number and therefore will not be written out into the final mapping.
+    #It is used to convey this offset for the second phase when generating code, specifically
+    #for the use of remap_target.  Without setting this it always sets the target to 0x8f. Sigh.
+    mapping[secondary_lookup_function_offset] = secondary_lookup_function_offset
   #Don't yet know mapping offset; we must compute it
   mapping[len(bytes)+base] = offset
   if not write_so:
@@ -755,7 +803,9 @@ def gen_newcode(md,bytes,base,mapping,entry):
       maplist.append(currmap)
       dummymap.update(currmap)
   #Add the lookup function as the first thing in the new text section
-  newbytes+=get_lookup_code(base,len(bytes),mapping[lookup_function_offset],mapping[mapping_offset])
+  newbytes+=get_lookup_code(base,len(bytes),lookup_function_offset,mapping[mapping_offset])
+  if exec_only:
+    newbytes += get_secondary_lookup_code(base,len(bytes),secondary_lookup_function_offset,mapping[mapping_offset])
   for m in maplist: #For each code mapping, in order of discovery
     for k in sorted(m.keys()): #For each original address to code, in order of original address
       newbytes+=m[k]
@@ -922,12 +972,12 @@ def renable(fname):
 	#print maptext.encode('hex')
         print '0x%x'%(base+len(bytes))
 	print 'code increase: %d%%'%(((len(newbytes)-len(bytes))/float(len(bytes)))*100)
-        lookup = get_lookup_code(base,len(bytes),mapping[lookup_function_offset],0x8f)
+        lookup = get_lookup_code(base,len(bytes),lookup_function_offset,0x8f)
         print 'lookup w/unknown mapping %s'%len(lookup)
         insts = md.disasm(lookup,0x0)
 	for ins in insts:
           print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
-        lookup = get_lookup_code(base,len(bytes),mapping[lookup_function_offset],mapping[mapping_offset])
+        lookup = get_lookup_code(base,len(bytes),lookup_function_offset,mapping[mapping_offset])
         print 'lookup w/known mapping %s'%len(lookup)
         insts = md.disasm(lookup,0x0)
 	for ins in insts:
@@ -954,7 +1004,11 @@ def renable(fname):
         stat['newfile'] = os.path.getsize(fname+'-r')
         stat['mapsize'] = len(maptext)
         stat['lookupsize'] = \
-          len(get_lookup_code(base,len(bytes),mapping[lookup_function_offset],mapping[mapping_offset]))
+          len(get_lookup_code(base,len(bytes),lookup_function_offset,mapping[mapping_offset]))
+        if exec_only:
+          stat['secondarylookupsize'] = \
+            len(get_secondary_lookup_code(base,len(bytes), \
+              secondary_lookup_function_offset,mapping[mapping_offset]))
         if not write_so:
           stat['auxvecsize'] = len(get_auxvec_code(mapping[entry]))
           with open(popgm) as f:
