@@ -60,6 +60,7 @@ popgm_offset = 0x8f
 new_entry_off = 0x8f
 write_so = False
 exec_only = False
+no_pic = False
 get_pc_thunk = None
 stat = {}
 stat['indcall'] = 0
@@ -189,7 +190,9 @@ def get_indirect_uncond_code(ins,mapping,target):
   code = b''
   if exec_only:
     code += get_remap_callbacks_code(ins.address,mapping,target)
-  if ins.mnemonic == 'call':
+  if no_pic:
+    #TODO PUT NO_PIC IMPLEMENTATION HERE
+  elif ins.mnemonic == 'call':
     stat['indcall']+=1
     if write_so:
       code += asm( template_before%(target,so_call_before) )
@@ -213,7 +216,9 @@ def get_indirect_uncond_code(ins,mapping,target):
   #Note that calling the lookup function can move the stack pointer temporarily up to
   #20 bytes, which will obliterate anything stored too close to the stack pointer.  That, plus
   #the return value we push on the stack, means we need to put it at least 28 bytes away.
-  if ins.mnemonic == 'call':
+  if no_pic:
+    #TODO PUT NO_PIC IMPLEMENTATION HERE
+  elif ins.mnemonic == 'call':
     code += asm(template_after%(lookup_target,28))
   else:  
     code += asm(template_after%(lookup_target,32))
@@ -481,7 +486,9 @@ def translate_uncond(ins,mapping):
   elif op.type == X86_OP_IMM: # e.g. call 0xdeadbeef or jmp 0xcafebada
     target = op.imm
     code = b''
-    if ins.mnemonic == 'call': #If it's a call, push the original address of the next instruction
+    if no_pic:
+      #TODO PUT NO_PIC IMPLEMENTATION HERE
+    elif ins.mnemonic == 'call': #If it's a call, push the original address of the next instruction
       stat['dircall']+=1
       exec_call = '''
       push %s
@@ -511,11 +518,15 @@ def translate_uncond(ins,mapping):
     #print "(pre)new length: %s"%len(callback_code)
     #print "target: %s"%hex(target)
     #print "newtarget: %s"%newtarget
-    patched = asm('jmp $+%s'%newtarget)
-    if len(patched) == 2: #Short encoding, which we do not want
-      patched+='\x90\x90\x90' #Add padding of 3 NOPs
+    if no_pic:
+      #TODO PUT NO_PIC IMPLEMENTATION HERE
+    else:
+      patched = asm('jmp $+%s'%newtarget)
+      if len(patched) == 2: #Short encoding, which we do not want
+        patched+='\x90\x90\x90' #Add padding of 3 NOPs
+      code += patched
     #print "new length: %s"%len(callback_code+patched)
-    return code+patched
+    return code
   return None
 
 def translate_cond(ins,mapping):
@@ -573,19 +584,23 @@ def translate_ret(ins,mapping):
   jmp [esp-4]
   '''
   stat['ret']+=1
-  code = asm(template_before)
-  size = len(code)
-  lookup_target = b''
-  if exec_only:
-    #Special lookup for not rewriting arguments when going outside new main text address space
-    lookup_target = remap_target(ins.address,mapping,secondary_lookup_function_offset,size)
+  code = b''
+  if no_pic:
+    code = asm('ret %s'%ins.op_str)#TODO PUT NO_PIC IMPLEMENTATION HERE
   else:
-    lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
-  if ins.op_str == '':
-    code+=asm(template_after%(lookup_target,'',32)) #32 because of the value we popped
-  else: #For ret instructions that pop imm16 bytes from the stack, add that many bytes to esp
-    pop_amt = int(ins.op_str,16) #We need to retrieve the right eax value from where we saved it
-    code+=asm(template_after%(lookup_target,'add esp,%d'%pop_amt,32+pop_amt))
+    code = asm(template_before)
+    size = len(code)
+    lookup_target = b''
+    if exec_only:
+      #Special lookup for not rewriting arguments when going outside new main text address space
+      lookup_target = remap_target(ins.address,mapping,secondary_lookup_function_offset,size)
+    else:
+      lookup_target = remap_target(ins.address,mapping,lookup_function_offset,size)
+    if ins.op_str == '':
+      code+=asm(template_after%(lookup_target,'',32)) #32 because of the value we popped
+    else: #For ret instructions that pop imm16 bytes from the stack, add that many bytes to esp
+      pop_amt = int(ins.op_str,16) #We need to retrieve the right eax value from where we saved it
+      code+=asm(template_after%(lookup_target,'add esp,%d'%pop_amt,32+pop_amt))
   return code
 
 def translate_one(ins,mapping):
@@ -1054,5 +1069,9 @@ if __name__ == '__main__':
   elif len(sys.argv) == 3 and sys.argv[1] == '-execonly':
     exec_only = True
     renable(sys.argv[2])
+  elif len(sys.argv) == 4 and ( (sys.argv[1] == '-execonly' and sys.argv[2] == '-nopic') or (sys.argv[2] == '-execonly' and sys.argv[1] == '-nopic') ):
+    exec_only = True
+    no_pic = True
+    renable(sys.argv[3])
   else:
-    print "Error: must pass executable filename.\nCorrect usage: %s [-so/-execonly] <filename>"%sys.argv[0]
+    print "Error: must pass executable filename.\nCorrect usage: %s [-so/[-execonly [-nopic]]] <filename>"%sys.argv[0]
