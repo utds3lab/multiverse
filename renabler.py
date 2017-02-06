@@ -97,6 +97,7 @@ def set_before_inst_callback(func):
      NOTE: NOTHING is done to protect the stack, registers, flags, etc!  If ANY of these are changed, there
      is a chance that EVERYTHING will go wrong!  Leave everything as you found it or suffer the consequences!
   '''
+  global before_inst_callback
   before_inst_callback = func
 
 
@@ -158,7 +159,9 @@ def get_callback_code(address,mapping,cbargs):
 def get_remap_callbacks_code(insaddr,mapping,target):
   '''Checks whether the target destination (expressed as the opcode string from a jmp/call instruction)
      is in the got, then checks if it matches a function with callbacks.  It then rewrites the
-     addresses if necessary.  This will *probably* always be from jmp instructions in the PLT.'''
+     addresses if necessary.  This will *probably* always be from jmp instructions in the PLT.
+     NOTE: This assumes it does not have any code inserted before it, and that it comprises the first
+     special instructions inserted for an instruction.'''
   if memory_ref_string.match(target):
     address = int(memory_ref_string.match(target).group('address'), 16)
     if address in plt['entries']:
@@ -209,11 +212,13 @@ def get_indirect_uncond_code(ins,mapping,target):
   '''
   #TODO: This is somehow still the bottleneck, so this needs to be optimized
   code = b''
+  if exec_only:
+    code += get_remap_callbacks_code(ins.address,mapping,target)
+  #NOTE: user instrumentation code comes after callbacks code.  No particular reason to put it either way,
+  #other than perhaps consistency, but for now this is easier.
   inserted = before_inst_callback(ins)
   if inserted is not None:
     code += inserted
-  if exec_only:
-    code += get_remap_callbacks_code(ins.address,mapping,target)
   if no_pic:
     if ins.mnemonic == 'call':
       stat['indcall']+=1
@@ -576,38 +581,38 @@ def translate_cond(ins,mapping):
   if ins.mnemonic in ['jcxz','jecxz']: #These instructions have no long encoding
     jcxz_template = '''
     test cx,cx
-    jz $+%s
     '''
     jecxz_template = '''
     test ecx,ecx
-    jz $+%s
     '''
     target = ins.operands[0].imm # int(ins.op_str,16) The destination of this instruction
-    newtarget = remap_target(ins.address,mapping,target,0)
+    #newtarget = remap_target(ins.address,mapping,target,0)
     if ins.mnemonic == 'jcxz':
-      patched+=asm(jcxz_template%newtarget)
+      patched+=asm(jcxz_template)
     else:
-      patched+=asm(jecxz_template%newtarget)
-    
-    print 'want %s, but have %s instead'%(remap_target(ins.address,mapping,target,len(patched)), newtarget)
-    patched += 'jz $+%s'%newtarget
+      patched+=asm(jecxz_template)
+    newtarget = remap_target(ins.address,mapping,target,len(patched))
+    #print 'want %s, but have %s instead'%(remap_target(ins.address,mapping,target,len(patched)), newtarget)
+    #Apparently the offset for jcxz and jecxz instructions may have been wrong?  How did it work before?
+    patched += asm('jz $+%s'%newtarget)
+    #print 'code length: %d'%len(patched)
     
     #TODO: some instructions encode to 6 bytes, some to 5, some to 2.  How do we know which?
     #For example, for CALL, it seems to only be 5 or 2 depending on offset.
     #But for jg, it can be 2 or 6 depending on offset, I think because it has a 2-byte opcode.
-    while len(patched) < 6: #Short encoding, which we do not want
-      patched+='\x90' #Add padding of NOPs
+    #while len(patched) < 6: #Short encoding, which we do not want
+    #  patched+='\x90' #Add padding of NOPs
     #The previous commented out code wouldn't even WORK now, since we insert another instruction
     #at the MINIMUM.  I'm amazed the jcxz/jecxz code even worked at all before
   else:
     target = ins.operands[0].imm # int(ins.op_str,16) The destination of this instruction
-    newtarget = remap_target(ins.address,mapping,target,0)
+    newtarget = remap_target(ins.address,mapping,target,len(patched))
     patched+=asm(ins.mnemonic + ' $+' + newtarget)
     #TODO: some instructions encode to 6 bytes, some to 5, some to 2.  How do we know which?
     #For example, for CALL, it seems to only be 5 or 2 depending on offset.
     #But for jg, it can be 2 or 6 depending on offset, I think because it has a 2-byte opcode.
-    while len(patched) < 6: #Short encoding, which we do not want
-      patched+='\x90' #Add padding of NOPs
+    #while len(patched) < 6: #Short encoding, which we do not want
+    #  patched+='\x90' #Add padding of NOPs
   return patched
 
 def translate_ret(ins,mapping):
