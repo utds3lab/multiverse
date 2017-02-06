@@ -186,12 +186,22 @@ def get_indirect_uncond_code(ins,mapping,target):
   mov eax, [esp-%s]
   jmp [esp-4]
   '''
+  template_nopic = '''
+  call $+%s
+  mov [esp-4], eax
+  mov eax, [esp-%s]
+  %s [esp-4]
+  '''
   #TODO: This is somehow still the bottleneck, so this needs to be optimized
   code = b''
   if exec_only:
     code += get_remap_callbacks_code(ins.address,mapping,target)
   if no_pic:
-    #TODO PUT NO_PIC IMPLEMENTATION HERE
+    if ins.mnemonic == 'call':
+      stat['indcall']+=1
+    else:
+      stat['indjmp']+=1
+    code += asm( template_before%(target,'') )
   elif ins.mnemonic == 'call':
     stat['indcall']+=1
     if write_so:
@@ -217,7 +227,9 @@ def get_indirect_uncond_code(ins,mapping,target):
   #20 bytes, which will obliterate anything stored too close to the stack pointer.  That, plus
   #the return value we push on the stack, means we need to put it at least 28 bytes away.
   if no_pic:
-    #TODO PUT NO_PIC IMPLEMENTATION HERE
+    #Change target to secondary lookup function instead
+    lookup_target = remap_target(ins.address,mapping,secondary_lookup_function_offset,size)
+    code += asm( template_nopic%(lookup_target,32,ins.mnemonic) )
   elif ins.mnemonic == 'call':
     code += asm(template_after%(lookup_target,28))
   else:  
@@ -486,8 +498,13 @@ def translate_uncond(ins,mapping):
   elif op.type == X86_OP_IMM: # e.g. call 0xdeadbeef or jmp 0xcafebada
     target = op.imm
     code = b''
-    if no_pic:
-      #TODO PUT NO_PIC IMPLEMENTATION HERE
+    if no_pic and target != get_pc_thunk:
+      #push nothing if no_pic UNLESS it's the thunk
+      #We only support DIRECT calls to the thunk
+      if ins.mnemonic == 'call':
+        stat['dircall']+=1
+      else:
+        stat['dirjmp']+=1
     elif ins.mnemonic == 'call': #If it's a call, push the original address of the next instruction
       stat['dircall']+=1
       exec_call = '''
@@ -518,8 +535,8 @@ def translate_uncond(ins,mapping):
     #print "(pre)new length: %s"%len(callback_code)
     #print "target: %s"%hex(target)
     #print "newtarget: %s"%newtarget
-    if no_pic:
-      #TODO PUT NO_PIC IMPLEMENTATION HERE
+    if no_pic and target != get_pc_thunk:
+      code += asm( '%s $+%s'%(ins.mnemonic,newtarget) )
     else:
       patched = asm('jmp $+%s'%newtarget)
       if len(patched) == 2: #Short encoding, which we do not want
@@ -585,8 +602,10 @@ def translate_ret(ins,mapping):
   '''
   stat['ret']+=1
   code = b''
-  if no_pic:
-    code = asm('ret %s'%ins.op_str)#TODO PUT NO_PIC IMPLEMENTATION HERE
+  if no_pic and ins.address != get_pc_thunk + 3:
+    #Perform a normal return UNLESS this is the ret for the thunk.
+    #Currently its position is hardcoded as three bytes after the thunk entry.
+    code = asm( 'ret %s'%ins.op_str )
   else:
     code = asm(template_before)
     size = len(code)
@@ -936,6 +955,8 @@ def renable(fname):
     else:
       print 'Writing as main binary'
       newbase = 0x09000000
+    if no_pic:
+      print 'Rewriting without support for generic PIC'
     for seg in elffile.iter_segments():
       if seg.header['p_flags'] == 5 and seg.header['p_type'] == 'PT_LOAD': #Executable load seg
         print "Base address: %s"%hex(seg.header['p_vaddr'])
@@ -1006,6 +1027,8 @@ def renable(fname):
           print 'new entry point: %x'%new_entry_off
           print 'new _start point: %x'%mapping[entry]
           print 'global lookup: 0x%x'%global_lookup
+        print 'local lookup: 0x%x'%lookup_function_offset
+        print 'secondary local lookup: 0x%x'%secondary_lookup_function_offset
         with open('%s-r-map.json'%fname,'wb') as f:
           json.dump(mapping,f)
         if not write_so:
