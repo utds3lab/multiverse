@@ -84,6 +84,21 @@ stat['lookupsize'] = 0
 #TODO: Should I count _rtlf_fini (offset 5)?  It seems to be not in the binary
 callbacks = {'__libc_start_main':[0,3,4]}
 
+# NEW PROTOTYPE INSTRUMENTATION FUNCTIONS -- NOT FINAL
+# Using a different approach than last time
+before_inst_callback = (lambda x: None)
+
+def set_before_inst_callback(func):
+  '''Pass a function that will be called when translating each instruction.
+     This function should accept an instruction argument (the instruction type returned from capstone),
+     which can be read to determine what code to insert (if any).  A byte string of assembled bytes
+     should be returned to be inserted before the instruction, or if none are to be inserted, return None.
+
+     NOTE: NOTHING is done to protect the stack, registers, flags, etc!  If ANY of these are changed, there
+     is a chance that EVERYTHING will go wrong!  Leave everything as you found it or suffer the consequences!
+  '''
+  before_inst_callback = func
+
 
 #Do stuff with call/jmp to anything in plt to check for functions with callbacks
 
@@ -194,6 +209,9 @@ def get_indirect_uncond_code(ins,mapping,target):
   '''
   #TODO: This is somehow still the bottleneck, so this needs to be optimized
   code = b''
+  inserted = before_inst_callback(ins)
+  if inserted is not None:
+    code += inserted
   if exec_only:
     code += get_remap_callbacks_code(ins.address,mapping,target)
   if no_pic:
@@ -498,6 +516,9 @@ def translate_uncond(ins,mapping):
   elif op.type == X86_OP_IMM: # e.g. call 0xdeadbeef or jmp 0xcafebada
     target = op.imm
     code = b''
+    inserted = before_inst_callback(ins)
+    if inserted is not None:
+      code += inserted
     if no_pic and target != get_pc_thunk:
       #push nothing if no_pic UNLESS it's the thunk
       #We only support DIRECT calls to the thunk
@@ -549,6 +570,9 @@ def translate_uncond(ins,mapping):
 def translate_cond(ins,mapping):
   stat['jcc']+=1
   patched = b''
+  inserted = before_inst_callback(ins)
+  if inserted is not None:
+    patched += inserted
   if ins.mnemonic in ['jcxz','jecxz']: #These instructions have no long encoding
     jcxz_template = '''
     test cx,cx
@@ -564,11 +588,17 @@ def translate_cond(ins,mapping):
       patched+=asm(jcxz_template%newtarget)
     else:
       patched+=asm(jecxz_template%newtarget)
+    
+    print 'want %s, but have %s instead'%(remap_target(ins.address,mapping,target,len(patched)), newtarget)
+    patched += 'jz $+%s'%newtarget
+    
     #TODO: some instructions encode to 6 bytes, some to 5, some to 2.  How do we know which?
     #For example, for CALL, it seems to only be 5 or 2 depending on offset.
     #But for jg, it can be 2 or 6 depending on offset, I think because it has a 2-byte opcode.
     while len(patched) < 6: #Short encoding, which we do not want
       patched+='\x90' #Add padding of NOPs
+    #The previous commented out code wouldn't even WORK now, since we insert another instruction
+    #at the MINIMUM.  I'm amazed the jcxz/jecxz code even worked at all before
   else:
     target = ins.operands[0].imm # int(ins.op_str,16) The destination of this instruction
     newtarget = remap_target(ins.address,mapping,target,0)
@@ -602,6 +632,9 @@ def translate_ret(ins,mapping):
   '''
   stat['ret']+=1
   code = b''
+  inserted = before_inst_callback(ins)
+  if inserted is not None:
+    code += inserted
   if no_pic and ins.address != get_pc_thunk + 3:
     #Perform a normal return UNLESS this is the ret for the thunk.
     #Currently its position is hardcoded as three bytes after the thunk entry.
@@ -633,6 +666,9 @@ def translate_one(ins,mapping):
     #print 'WARNING: unimplemented %s %s'%(ins.mnemonic,ins.op_str)
     return '\xf4\xf4\xf4\xf4' #Create obvious cluster of hlt instructions
   else: #Any other instruction
+    inserted = before_inst_callback(ins)
+    if inserted is not None:
+      return inserted + str(ins.bytes)
     return None #No translation needs to be done
 
 def get_instr(md,bytes,instoff,base):
