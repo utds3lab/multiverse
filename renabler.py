@@ -721,111 +721,78 @@ def brute_force_disasm(md,bytes,base,instoff,dummymap):
       instoff+=1
       yield None'''
 
-def gen_mapping(md,bytes,base):
-  print 'Generating mapping...'
-  ten_percent = len(bytes)/10
-  mapping = {}
-  #Each mapping in maplist holds the length of that instruction (or instructions if patched)
-  maplist = []
-  dummymap = {}
-  for off in range(0,len(bytes)):
-    if off%ten_percent == 0:
-      print 'Mapping %d%% complete...'%((off/ten_percent)*10)
-    instoff = off #instruction offset is the offset in this decoding
-    newoff = 0 #For each decoding, we have a new offset, starting at 0
-    #Each mapping in maplist has offset from wherever it starts, so
-    #when we put them together we have the freedom to shuffle their positions
+from brute_force_disassembler import BruteForceDisassembler
+disassembler = None
+
+def temp_init_disasm(arch,bytes,base,entry):
+  global disassembler
+  disassembler = BruteForceDisassembler(arch)
+
+def gen_mapping(bytes,base):
+    print 'Generating mapping...'
+    mapping = {}
+    maplist = []
     currmap = {}
-    #print "[MAPPING] DOING OFFSET %s"%off
-    for ins in brute_force_disasm(md,bytes,base,off,dummymap):
-      if ins is None: #If the instruction was invalid, stop current disassembly
-        break
-      newins = translate_one(ins,None) #In this pass, the mapping is incomplete
-      if newins is not None:
-        currmap[ins.address] = len(newins)
-        newoff+=len(newins) #Move our mapping's offset by the size of the new instructions
-      else:
-        currmap[ins.address] = len(ins.bytes)
-        newoff+=len(ins.bytes) #Move our mapping's offset by the size of the original instruction
-    if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
-      #Add an instruction to the last patched instruction jumping to wherever the next instruction
-      #would map to, since it isn't contiguous
-      reroute = asm('jmp $+0x8f')
-      last = max(currmap.keys())
-      currmap[last]+=len(reroute)
-      maplist.append(currmap)
-      dummymap.update(currmap)
-    '''
-    while instoff < len(bytes):
-      in_mapping = False
-      for m in maplist:
-        if base+instoff in m:
-          in_mapping = True
-          break
-      if in_mapping:
-        break
-      insts = md.disasm(bytes[instoff:instoff+15],base+instoff)#longest x86/x64 instr is 15 bytes
-      try:
-        ins = insts.next()
-        print "%s AND %s"%(base+instoff,ins.address)
-        currmap[base+instoff] = newoff
-        instoff+=len(ins.bytes) #Move instoff only as far as the next old instruction
-        newins = translate_one(ins,None)#In this pass, the mapping is incomplete
+    last = None #Last instruction disassembled
+    reroute = assembler.asm('jmp $+0x8f') #Dummy jmp to imitate connecting jmp; we may not know dest yet
+    for ins in disassembler.disasm(bytes,base):
+      if ins is None and last is not None: # Encountered a previously disassembled instruction and have not redirected
+        currmap[last.address] += len(reroute)
+        last = None #If we have not found any more new instructions since our last redirect, don't redirect again
+        maplist.append(currmap)
+        currmap = {}
+      elif ins is not None:
+        last = ins #Remember the last disassembled instruction
+        newins = translate_one(ins,None) #In this pass, the mapping is incomplete
         if newins is not None:
-          newoff+=len(newins) #Move our mapping's offset further than instoff (size of NEW instructions)
+          currmap[ins.address] = len(newins)
         else:
-          newoff+=len(ins.bytes)
-      except StopIteration:
-        newoff+=1 #Just move forward one byte
-        instoff+=1
-    if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
-      maplist.append(currmap)
-    '''
-  global lookup_function_offset
-  lookup_function_offset = 0 #Place lookup function at start of new text section
-  lookup_size = len(get_lookup_code(base,len(bytes),0,0x8f)) #TODO: Issue with mapping offset & size
-  offset = lookup_size
-  if exec_only:
-    global secondary_lookup_function_offset
-    secondary_lookup_function_offset = offset
-    secondary_lookup_size = len(get_secondary_lookup_code(base,len(bytes),offset,0x8f))
-    offset += secondary_lookup_size
-  for m in maplist:
-    for k in sorted(m.keys()):
-      size = m[k]
-      mapping[k] = offset
-      offset+=size #Add the size of this instruction to the total offset
-  #Now that the mapping is complete, we know the length of it
-  global mapping_offset
-  mapping_offset = len(bytes)+base #Where we pretend the mapping was in the old code
-  if not write_so:
-    global new_entry_off
-    new_entry_off = offset
-    offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
-  mapping[lookup_function_offset] = lookup_function_offset
-  if exec_only:
-    #This is a very low number and therefore will not be written out into the final mapping.
-    #It is used to convey this offset for the second phase when generating code, specifically
-    #for the use of remap_target.  Without setting this it always sets the target to 0x8f. Sigh.
-    mapping[secondary_lookup_function_offset] = secondary_lookup_function_offset
-  #Don't yet know mapping offset; we must compute it
-  mapping[len(bytes)+base] = offset
-  if not write_so:
-    #For NOW, place the global data/function at the end of this because we can't necessarily fit
-    #another section.  TODO: put this somewhere else
-    global global_sysinfo
-    global global_flag
-    #The first time, sysinfo's and flag's location is unknown,
-    #so they are wrong in the first call to get_global_lookup_code
-    #However, the global_flag is moving to a TLS section, so it takes
-    #up no space in the global lookup
-    #global_flag = global_lookup + len(get_global_lookup_code())
-    #popgm goes directly after the global lookup, and global_sysinfo directly after that.
-    global popgm_offset
-    popgm_offset = len(get_global_lookup_code())
-    global_sysinfo = global_lookup + popgm_offset + len(write_popgm())
-    #Now that this is set, the auxvec code should work
-  return mapping
+          currmap[ins.address] = len(ins.bytes)
+    global lookup_function_offset
+    lookup_function_offset = 0 #Place lookup function at start of new text section
+    lookup_size = len(get_lookup_code(base,len(bytes),0,0x8f)) #TODO: Issue with mapping offset & size
+    offset = lookup_size
+    if exec_only:
+      global secondary_lookup_function_offset
+      secondary_lookup_function_offset = offset
+      secondary_lookup_size = len(get_secondary_lookup_code(base,len(bytes),offset,0x8f))
+      offset += secondary_lookup_size
+    for m in maplist:
+      for k in sorted(m.keys()):
+        size = m[k]
+        mapping[k] = offset
+        offset+=size #Add the size of this instruction to the total offset
+    #Now that the mapping is complete, we know the length of it
+    global mapping_offset
+    mapping_offset = len(bytes)+base #Where we pretend the mapping was in the old code
+    if not write_so:
+      global new_entry_off
+      new_entry_off = offset #Set entry point to start of auxvec
+      offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
+    mapping[lookup_function_offset] = lookup_function_offset
+    if exec_only:
+      #This is a very low number and therefore will not be written out into the final mapping.
+      #It is used to convey this offset for the second phase when generating code, specifically
+      #for the use of remap_target.  Without setting this it always sets the target to 0x8f. Sigh.
+      mapping[secondary_lookup_function_offset] = secondary_lookup_function_offset
+    #Don't yet know mapping offset; we must compute it
+    mapping[len(bytes)+base] = offset
+    if not write_so:
+      #For NOW, place the global data/function at the end of this because we can't necessarily fit
+      #another section.  TODO: put this somewhere else
+      global global_sysinfo
+      global global_flag
+      #The first time, sysinfo's and flag's location is unknown,
+      #so they are wrong in the first call to get_global_lookup_code
+      #However, the global_flag is moving to a TLS section, so it takes
+      #up no space in the global lookup
+      #global_flag = global_lookup + len(get_global_lookup_code())
+      #popgm goes directly after the global lookup, and global_sysinfo directly after that.
+      global popgm_offset
+      popgm_offset = len(get_global_lookup_code())
+      global_sysinfo = global_lookup + popgm_offset + len(write_popgm())
+      #Now that this is set, the auxvec code should work
+    return mapping
 
 def write_mapping(mapping,base,size):
   bytes = b''
@@ -838,76 +805,43 @@ def write_mapping(mapping,base,size):
   print 'last address in mapping was 0x%x'%(base+size)
   return bytes
 
-def gen_newcode(md,bytes,base,mapping,entry):
-  print 'Generating new code...'
-  ten_percent = len(bytes)/10
-  newbytes = ''
-  bytemap = {}
-  maplist = [] #This maplist maps addresses to patched instruction bytes instead of a new address
-  dummymap = {}
-  for off in range(0,len(bytes)):
-    if off%ten_percent == 0:
-      print 'Code generation %d%% complete...'%((off/ten_percent)*10)
-    currmap = {}
-    #print "[CODE] DOING OFFSET %s"%off
-    for ins in brute_force_disasm(md,bytes,base,off,dummymap):
-      if ins is None: #If the instruction was invalid, stop current disassembly
-        break
-      newins = translate_one(ins,mapping) #In this pass, the mapping is incomplete
-      if newins is not None:
-        tmps = md.disasm(newins,base+mapping[ins.address])
-        #print 'address: %x off: %x mapping[addr]: %x'%(ins.address,off,mapping[ins.address])
-        #for tmp in tmps:
-        #  print '0x%x(0x%x):\t%s\t%s'%(tmp.address,ins.address,tmp.mnemonic,tmp.op_str)
-        #print '---'
-        currmap[ins.address] = newins #Old address maps to these new instructions
-      else:
-        currmap[ins.address] = str(ins.bytes) #This instruction is unchanged, and its old address maps to it
-    if currmap != {}: #If we have inserted any entries into this mapping, append to our maplist
-      #Add an instruction to the last patched instruction jumping to wherever the next instruction
-      #would map to, since it isn't contiguous
-      last = max(currmap.keys())
-      ins = md.disasm(bytes[last-base:(last-base+15)],last).next() #should always disassemble
-      size = len(currmap[last]) #size of instructions we need to skip over
-      target = last+len(ins.bytes) #address of where in the original code we would want to jmp to
-      next_target = remap_target(last,mapping,target,size)
-      reroute = asm('jmp $+'+next_target)
-      if len(reroute) == 2: #Short encoding, which we do not want
-        reroute+='\x90\x90\x90' #Add padding of 3 NOPs
-      currmap[last]+=reroute #add bytes of unconditional jump
-      maplist.append(currmap)
-      dummymap.update(currmap)
-  #Add the lookup function as the first thing in the new text section
-  newbytes+=get_lookup_code(base,len(bytes),lookup_function_offset,mapping[mapping_offset])
-  if exec_only:
-    newbytes += get_secondary_lookup_code(base,len(bytes),secondary_lookup_function_offset,mapping[mapping_offset])
-  for m in maplist: #For each code mapping, in order of discovery
-    for k in sorted(m.keys()): #For each original address to code, in order of original address
-      newbytes+=m[k]
-  print newbytes[0:10]
-  '''
-    insts = md.disasm(bytes[off:off+15],base+off)#longest possible x86/x64 instr is 15 bytes
-    try:
-      ins = insts.next()
-      newins = translate_one(ins,mapping)#The mapping is now complete
-      if newins is not None:
-        #print '%s'%newins.encode('hex')
-        tmps = md.disasm(newins,base+mapping[base+off])
-        print 'address: %x off: %x mapping[base+off]: %x len(newbytes): %x '%(ins.address,off,mapping[base+off],len(newbytes))
-        for tmp in tmps:
-          print '0x%x(0x%x):\t%s\t%s'%(tmp.address,len(newbytes)+base,tmp.mnemonic,tmp.op_str)
-        print '---'
-        newbytes+=newins #newins is simply the bytes of an assembled instruction
-      else:
-        newbytes+=bytes[off]
-    except StopIteration:
-      newbytes+=bytes[off] #No change, just add byte
-    '''
-  if not write_so:
-    newbytes+=get_auxvec_code(mapping[entry])
-  #Append mapping to end of bytes
-  newbytes+=write_mapping(mapping,base,len(bytes))
-  return newbytes
+def gen_newcode(mapping,bytes,base,entry):
+    print 'Generating new code...'
+    newbytes = ''
+    bytemap = {}
+    maplist = []
+    last = None #Last instruction disassembled
+    for ins in disassembler.disasm(bytes,base):
+      if ins is None and last is not None: # Encountered a previously disassembled instruction and have not redirected
+        target = last.address + len(last.bytes) #address of where in the original code we would want to jmp to
+        next_target = remap_target(last.address, mapping, target, len(bytemap[last.address]) )
+        reroute = assembler.asm( 'jmp $+%s'%(next_target) )
+        if len(reroute) == 2: #Short encoding, which we do not want
+          reroute+='\x90\x90\x90' #Add padding of 3 NOPs
+        bytemap[last.address] += reroute
+        last = None
+        maplist.append(bytemap)
+        bytemap = {}
+      elif ins is not None:
+        last = ins
+        newins = translate_one(ins,mapping) #In this pass, the mapping is incomplete
+        if newins is not None:
+          bytemap[ins.address] = newins #Old address maps to these new instructions
+        else:
+          bytemap[ins.address] = str(ins.bytes) #This instruction is unchanged, and its old address maps to it
+    #Add the lookup function as the first thing in the new text section
+    newbytes+=get_lookup_code(base,len(bytes),lookup_function_offset,mapping[mapping_offset])
+    if exec_only:
+      newbytes += get_secondary_lookup_code(base,len(bytes),secondary_lookup_function_offset,mapping[mapping_offset])
+    count = 0
+    for m in maplist:
+      for k in sorted(m.keys()): #For each original address to code, in order of original address
+        newbytes+=m[k]
+    if not write_so:
+      newbytes+=get_auxvec_code(mapping[entry])
+    #Append mapping to end of bytes
+    newbytes+=write_mapping(mapping,base,len(bytes))
+    return newbytes
 
 def write_popgm():
   call_popgm = '''
@@ -1005,8 +939,9 @@ def renable(fname):
         md.detail = True
         bytes = seg.data()
         base = seg.header['p_vaddr']
-        mapping = gen_mapping(md,bytes,base)
-        newbytes = gen_newcode(md,bytes,base,mapping,entry)
+        temp_init_disasm('x86',bytes,base,entry)
+        mapping = gen_mapping(bytes,base)
+        newbytes = gen_newcode(mapping,bytes,base,entry)
         #Perhaps I could find a better location to set the value of global_flag
         #(which is the offset from gs)
         #I only need one byte for the global flag, so I am adding a tiny bit to TLS
