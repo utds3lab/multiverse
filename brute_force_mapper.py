@@ -1,5 +1,7 @@
 import brute_force_disassembler
 import assembler
+import x86_translator
+import x86_runtime
 
 class BruteForceMapper(Mapper):
   ''' This mapper disassembled from every offset and includes a
@@ -8,70 +10,79 @@ class BruteForceMapper(Mapper):
       it has encountered before, the mapper simply includes a jump instruction
       to link the current sequence to a previously mapped sequence.'''
   
-  def __init__(self,arch,bytes,base,entry):
+  def __init__(self,arch,bytes,base,entry,context):
     self.disassembler = BruteForceDisassembler(arch)
     self.bytes = bytes
     self.base = base
     self.entry = entry
+    self.context = context
+    if arch == 'x86':
+      #NOTE: We are currently NOT supporting instrumentation because we are passing
+      #None to the translator.  TODO: Add back instrumentation after everything gets
+      #working again, and make instrumentation feel more organized
+      self.translator = X86Translator((lambda x: None),self.context)
+      self.runtime = X86Runtime(self.context)
+    elif arch == 'x86-64':
+      raise NotImplementedError( 'WE DO NOT SUPPORT 64-BIT YET' )
+    else:
+      raise NotImplementedError( 'Architecture %s is not supported'%arch )
 
   def gen_mapping(self):
     print 'Generating mapping...'
     mapping = {}
+    maplist = []
+    currmap = {}
     last = None #Last instruction disassembled
     reroute = assembler.asm('jmp $+0x8f') #Dummy jmp to imitate connecting jmp; we may not know dest yet
     for ins in self.disassembler.disasm(self.bytes,self.base):
       if ins is None and last is not None: # Encountered a previously disassembled instruction and have not redirected
-        mapping[last.address] += len(reroute)
+        currmap[last.address] += len(reroute)
         last = None #If we have not found any more new instructions since our last redirect, don't redirect again
-      else:
+        maplist.append(currmap)
+        currmap = {}
+      elif ins is not None:
         last = ins #Remember the last disassembled instruction
-        newins = translate_one(ins,None) #In this pass, the mapping is incomplete
+        newins = self.translator.translate_one(ins,None) #In this pass, the mapping is incomplete
         if newins is not None:
-          mapping[ins.address] = len(newins)
+          currmap[ins.address] = len(newins)
         else:
-          mapping[ins.address] = len(ins.bytes)
-    global lookup_function_offset
-    lookup_function_offset = 0 #Place lookup function at start of new text section
+          currmap[ins.address] = len(ins.bytes)
+    context.lookup_function_offset = 0 #Place lookup function at start of new text section
     lookup_size = len(get_lookup_code(self.base,len(self.bytes),0,0x8f)) #TODO: Issue with mapping offset & size
     offset = lookup_size
-    if exec_only:
-      global secondary_lookup_function_offset
-      secondary_lookup_function_offset = offset
+    if context.exec_only:
+      context.secondary_lookup_function_offset = offset
       secondary_lookup_size = len(get_secondary_lookup_code(self.base,len(self.bytes),offset,0x8f))
       offset += secondary_lookup_size
-    for k in sorted(mapping.keys()):
-      size = mapping[k]
-      mapping[k] = offset
-      offset+=size #Add the size of this instruction to the total offset
+    for m in maplist:
+      for k in sorted(m.keys()):
+        size = m[k]
+        mapping[k] = offset
+        offset+=size #Add the size of this instruction to the total offset
     #Now that the mapping is complete, we know the length of it
-    global mapping_offset
-    mapping_offset = len(self.bytes)+self.base #Where we pretend the mapping was in the old code
-    if not write_so:
-      global new_entry_off
-      new_entry_off = offset #Set entry point to start of auxvec
+    context.mapping_offset = len(self.bytes)+self.base #Where we pretend the mapping was in the old code
+    if not context.write_so:
+      context.new_entry_off = offset #Set entry point to start of auxvec
       offset+=len(get_auxvec_code(0x8f))#Unknown entry addr here, but not needed b/c we just need len
-    mapping[lookup_function_offset] = lookup_function_offset
-    if exec_only:
+    mapping[context.lookup_function_offset] = context.lookup_function_offset
+    if context.exec_only:
       #This is a very low number and therefore will not be written out into the final mapping.
       #It is used to convey this offset for the second phase when generating code, specifically
       #for the use of remap_target.  Without setting this it always sets the target to 0x8f. Sigh.
-      mapping[secondary_lookup_function_offset] = secondary_lookup_function_offset
+      mapping[context.secondary_lookup_function_offset] = context.secondary_lookup_function_offset
     #Don't yet know mapping offset; we must compute it
-    mapping[len(bytes)+self.base] = offset
-    if not write_so:
+    mapping[len(self.bytes)+self.base] = offset
+    if not context.write_so:
       #For NOW, place the global data/function at the end of this because we can't necessarily fit
       #another section.  TODO: put this somewhere else
-      global global_sysinfo
-      global global_flag
       #The first time, sysinfo's and flag's location is unknown,
       #so they are wrong in the first call to get_global_lookup_code
       #However, the global_flag is moving to a TLS section, so it takes
       #up no space in the global lookup
       #global_flag = global_lookup + len(get_global_lookup_code())
       #popgm goes directly after the global lookup, and global_sysinfo directly after that.
-      global popgm_offset
-      popgm_offset = len(get_global_lookup_code())
-      global_sysinfo = global_lookup + popgm_offset + len(write_popgm())
+      context.popgm_offset = len(get_global_lookup_code())
+      context.global_sysinfo = context.global_lookup + context.popgm_offset + len(get_popgm_code())
       #Now that this is set, the auxvec code should work
     return mapping
 
@@ -79,6 +90,7 @@ class BruteForceMapper(Mapper):
     print 'Generating new code...'
     newbytes = ''
     bytemap = {}
+    maplist = []
     last = None #Last instruction disassembled
     for ins in self.disassembler.disasm(self.bytes,self.base):
       if ins is None and last is not None: # Encountered a previously disassembled instruction and have not redirected
@@ -89,20 +101,24 @@ class BruteForceMapper(Mapper):
           reroute+='\x90\x90\x90' #Add padding of 3 NOPs
         bytemap[last.address] += reroute
         last = None
-      else:
-        last = ins #Remember the last disassembled instruction
+        maplist.append(bytemap)
+        bytemap = {}
+      elif ins is not None:
+        last = ins
         newins = translate_one(ins,mapping) #In this pass, the mapping is incomplete
         if newins is not None:
           bytemap[ins.address] = newins #Old address maps to these new instructions
         else:
           bytemap[ins.address] = str(ins.bytes) #This instruction is unchanged, and its old address maps to it
     #Add the lookup function as the first thing in the new text section
-    newbytes+=get_lookup_code(self.base,len(self.bytes),lookup_function_offset,mapping[mapping_offset])
-    if exec_only:
-      newbytes += get_secondary_lookup_code(self.base,len(self.bytes),secondary_lookup_function_offset,mapping[mapping_offset])
-    for k in sorted(bytemap.keys()): #For each original address to code, in order of original address
-      newbytes+=bytemap[k]
-    if not write_so:
+    newbytes+=get_lookup_code(self.base,len(self.bytes),context.lookup_function_offset,mapping[context.mapping_offset])
+    if context.exec_only:
+      newbytes += get_secondary_lookup_code(self.base,len(self.bytes),context.secondary_lookup_function_offset,mapping[context.mapping_offset])
+    count = 0
+    for m in maplist:
+      for k in sorted(m.keys()): #For each original address to code, in order of original address
+        newbytes+=m[k]
+    if not context.write_so:
       newbytes+=get_auxvec_code(mapping[self.entry])
     #Append mapping to end of bytes
     newbytes+=write_mapping(mapping,self.base,len(self.bytes))

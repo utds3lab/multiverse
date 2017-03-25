@@ -7,7 +7,7 @@ class Mapper(object):
       used by this system should inherit from this parent
       object and provide implementations for all functions listed.'''
   
-  def __init__(self,arch,bytes,base,entry):
+  def __init__(self,arch,bytes,base,entry,context):
     raise NotImplementedError('Override __init__() in a child class')
   def gen_mapping(self):
     raise NotImplementedError('Override gen_mapping() in a child class')

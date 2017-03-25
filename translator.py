@@ -6,10 +6,10 @@ class Translator(object):
       for jmp/JCC/call/ret destinations and inserting user-defined
       instrumentation code around instructions. 
 
-      This is a generic Translator object.  All translator
+      This is a generic Translator object.  All translators
       used by this system should inherit from this parent
       object and provide implementations for all functions listed.'''
-  def __init__(self,before_callback):
+  def __init__(self,before_callback,context):
     raise NotImplementedError('Override __init__() in a child class')
   def translate_one(ins,mapping):
     raise NotImplementedError('Override translate_one() in a child class')
