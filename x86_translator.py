@@ -1,5 +1,8 @@
 from assembler import asm
+from capstone.x86 import X86_OP_REG,X86_OP_MEM,X86_OP_IMM
 import struct
+import re
+from translator import Translator
 
 class X86Translator(Translator):
 
@@ -7,14 +10,18 @@ class X86Translator(Translator):
     self.before_inst_callback = before_callback
     self.context = context
     self.memory_ref_string = re.compile(u'^dword ptr \[(?P<address>0x[0-9a-z]+)\]$')
+    #From Brian's Static_phase.py
+    self.JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
+      'jc','jnb','jae','jnc','jbe','jna','ja','jnbe','jl','jnge','jge',
+      'jnl','jle','jng','jg','jnle','jp','jpe','jnp','jpo','jcxz','jecxz']
 
   def translate_one(self,ins,mapping):
     if ins.mnemonic in ['call','jmp']: #Unconditional jump
-      return translate_uncond(ins,mapping)
-    elif ins.mnemonic in JCC: #Conditional jump
-      return translate_cond(ins,mapping)
+      return self.translate_uncond(ins,mapping)
+    elif ins.mnemonic in self.JCC: #Conditional jump
+      return self.translate_cond(ins,mapping)
     elif ins.mnemonic == 'ret':
-      return translate_ret(ins,mapping)
+      return self.translate_ret(ins,mapping)
     elif ins.mnemonic in ['retn','retf','repz']: #I think retn is not used in Capstone
       #print 'WARNING: unimplemented %s %s'%(ins.mnemonic,ins.op_str)
       return '\xf4\xf4\xf4\xf4' #Create obvious cluster of hlt instructions
@@ -147,7 +154,7 @@ class X86Translator(Translator):
         sub ebx,%s
         xchg ebx,[esp]
         '''
-        if write_so:
+        if self.context.write_so:
           code += asm(so_call_before)
           if mapping is not None:
             # Note that if somehow newbase is a very small value we could have problems with the small
@@ -159,11 +166,11 @@ class X86Translator(Translator):
           code += asm(exec_call%(ins.address+len(ins.bytes)))
       else:
         self.context.stat['dirjmp']+=1
-      newtarget = self.context.remap_target(ins.address,mapping,target,len(code))
+      newtarget = self.remap_target(ins.address,mapping,target,len(code))
       #print "(pre)new length: %s"%len(callback_code)
       #print "target: %s"%hex(target)
       #print "newtarget: %s"%newtarget
-      if no_pic and target != get_pc_thunk:
+      if self.context.no_pic and target != self.context.get_pc_thunk:
         code += asm( '%s $+%s'%(ins.mnemonic,newtarget) )
       else:
         patched = asm('jmp $+%s'%newtarget)
@@ -223,7 +230,7 @@ class X86Translator(Translator):
     inserted = self.before_inst_callback(ins)
     if inserted is not None:
       code += inserted
-    if no_pic:
+    if self.context.no_pic:
       if ins.mnemonic == 'call':
         self.context.stat['indcall']+=1
       else:
@@ -270,7 +277,7 @@ class X86Translator(Translator):
        NOTE: This assumes it does not have any code inserted before it, and that it comprises the first
        special instructions inserted for an instruction.'''
     if self.memory_ref_string.match(target):
-      address = int(memory_ref_string.match(target).group('address'), 16)
+      address = int(self.memory_ref_string.match(target).group('address'), 16)
       if address in self.context.plt['entries']:
         if self.context.plt['entries'][address] in self.context.callbacks:
           print 'Found library call with callbacks: %s'%self.context.plt['entries'][address]
@@ -299,7 +306,7 @@ class X86Translator(Translator):
       cb_before = callback_template_before%( ind + 2 )
       code += asm(cb_before) #Assemble this part first so we will know the offset to the lookup function
       size = len(code)
-      lookup_target = self.remap_target( address, mapping, lookup_function_offset, size )
+      lookup_target = self.remap_target( address, mapping, self.context.lookup_function_offset, size )
       cb_after = callback_template_after%( lookup_target, ind + 2 )
       code += asm(cb_after) #Save the new address over the original
     code += asm('pop eax') #Restore eax

@@ -106,9 +106,9 @@ class X86Runtime(object):
     	add eax,%s
     '''
     #retrieve eip 8 bytes after start of lookup function
-    if context.write_so:
-      return _asm(lookup_template%(lookup_off+8,so_code%(newbase,newbase),size,mapping_off,so_restore%(newbase,newbase),context.global_lookup))
-    elif context.exec_only:
+    if self.context.write_so:
+      return _asm(lookup_template%(lookup_off+8,so_code%(self.context.newbase,self.context.newbase),size,mapping_off,so_restore%(self.context.newbase,self.context.newbase),context.global_lookup))
+    elif self.context.exec_only:
       return _asm( exec_only_lookup%(lookup_off+8,base,size,mapping_off,base) )
     else:
       return _asm(lookup_template%(lookup_off+8,exec_code%base,size,mapping_off,exec_restore%base,context.global_lookup))
@@ -183,7 +183,7 @@ class X86Runtime(object):
     	mov eax,1
     	int 0x80
     '''
-    return _asm(global_lookup_template%(context.global_sysinfo,context.global_flag,context.global_flag,context.global_sysinfo+4,context.global_flag,context.global_flag))
+    return _asm(global_lookup_template%(self.context.global_sysinfo,self.context.global_flag,self.context.global_flag,self.context.global_sysinfo+4,self.context.global_flag,self.context.global_flag))
 
   def get_auxvec_code(self,entry):
     #Example assembly for searching the auxiliary vector
@@ -250,7 +250,7 @@ class X86Runtime(object):
     	mov DWORD PTR [esp-12], %s
   	jmp [esp-12]
     '''
-    return _asm(auxvec_template%(context.global_sysinfo,context.global_lookup+context.popgm_offset,newbase+entry))
+    return _asm(auxvec_template%(self.context.global_sysinfo,self.context.global_lookup+self.context.popgm_offset,self.context.newbase+entry))
 
   def get_popgm_code(self):
     call_popgm = '''
@@ -261,7 +261,19 @@ class X86Runtime(object):
     popad
     ret
     '''
-    popgmbytes = asm(call_popgm%(context.global_sysinfo+4))
-    with open(popgm) as f:
+    popgmbytes = asm(call_popgm%(self.context.global_sysinfo+4))
+    with open(self.context.popgm) as f:
       popgmbytes+=f.read()
     return popgmbytes
+
+  def get_global_mapping_bytes(self):
+    globalbytes = self.get_global_lookup_code()
+    #globalbytes+='\0' #flag field
+    globalbytes += self.get_popgm_code()
+    globalbytes += '\0\0\0\0' #sysinfo field
+    #Global mapping (0x3ffff8 0xff bytes) ending at kernel addresses.  Note it is NOT ending
+    #at 0xc0000000 because this boundary is only true for 32-bit kernels.  For 64-bit kernels,
+    #the application is able to use most of the entire 4GB address space, and the kernel only
+    #holds onto a tiny 8KB at the top of the address space.
+    globalbytes += '\xff'*((0xffffe000>>12)<<2) 
+    return globalbytes
