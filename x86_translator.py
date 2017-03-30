@@ -1,4 +1,4 @@
-from assembler import asm
+from x86_assembler import asm
 from capstone.x86 import X86_OP_REG,X86_OP_MEM,X86_OP_IMM
 import struct
 import re
@@ -159,9 +159,9 @@ class X86Translator(Translator):
           if mapping is not None:
             # Note that if somehow newbase is a very small value we could have problems with the small
             # encoding of sub.  This could result in different lengths between the mapping and code gen phases
-            code += asm(so_call_after%( (newbase+(mapping[ins.address]+len(code))) - (ins.address+len(ins.bytes)) ) )
+            code += asm(so_call_after%( (self.context.newbase+(mapping[ins.address]+len(code))) - (ins.address+len(ins.bytes)) ) )
           else:
-            code += asm(so_call_after%( (newbase) - (ins.address+len(ins.bytes)) ) )
+            code += asm(so_call_after%( (self.context.newbase) - (ins.address+len(ins.bytes)) ) )
         else:
           code += asm(exec_call%(ins.address+len(ins.bytes)))
       else:
@@ -241,10 +241,10 @@ class X86Translator(Translator):
       if self.context.write_so:
         code += asm( template_before%(target,so_call_before) )
         if mapping is not None:
-          code += asm(so_call_after%( (mapping[ins.address]+len(code)+newbase) - (ins.address+len(ins.bytes)) ) )
+          code += asm(so_call_after%( (mapping[ins.address]+len(code)+self.context.newbase) - (ins.address+len(ins.bytes)) ) )
           #print 'CODE LEN/1: %d\n%s'%(len(code),code.encode('hex'))
         else:
-          code += asm(so_call_after%( (0x8f+newbase) - (ins.address+len(ins.bytes)) ) )
+          code += asm(so_call_after%( (0x8f+self.context.newbase) - (ins.address+len(ins.bytes)) ) )
           #print 'CODE LEN/0: %d\n%s'%(len(code),code.encode('hex'))
       else:
         code += asm(template_before%(target,exec_call%(ins.address+len(ins.bytes)) ))

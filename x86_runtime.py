@@ -1,4 +1,4 @@
-from assembler import _asm,asm
+from x86_assembler import _asm,asm
 
 class X86Runtime(object):
   def __init__(self,context):
@@ -107,11 +107,11 @@ class X86Runtime(object):
     '''
     #retrieve eip 8 bytes after start of lookup function
     if self.context.write_so:
-      return _asm(lookup_template%(lookup_off+8,so_code%(self.context.newbase,self.context.newbase),size,mapping_off,so_restore%(self.context.newbase,self.context.newbase),context.global_lookup))
+      return _asm(lookup_template%(lookup_off+8,so_code%(self.context.newbase,self.context.newbase),size,mapping_off,so_restore%(self.context.newbase,self.context.newbase),self.context.global_lookup))
     elif self.context.exec_only:
       return _asm( exec_only_lookup%(lookup_off+8,base,size,mapping_off,base) )
     else:
-      return _asm(lookup_template%(lookup_off+8,exec_code%base,size,mapping_off,exec_restore%base,context.global_lookup))
+      return _asm(lookup_template%(lookup_off+8,exec_code%base,size,mapping_off,exec_restore%base,self.context.global_lookup))
 
   def get_secondary_lookup_code(self,base,size,sec_lookup_off,mapping_off):
     '''This secondary lookup is only used when rewriting only the main executable.  It is a second, simpler

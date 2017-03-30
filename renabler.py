@@ -4,7 +4,6 @@ import capstone
 import sys
 #from pwn import asm,context
 #context(os='linux',arch='i386')
-from assembler import asm,_asm
 import assembler
 import cProfile
 import bin_write

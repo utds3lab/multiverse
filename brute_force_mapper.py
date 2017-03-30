@@ -1,4 +1,3 @@
-import assembler
 import struct
 from mapper import Mapper
 from brute_force_disassembler import BruteForceDisassembler
@@ -24,6 +23,8 @@ class BruteForceMapper(Mapper):
       #working again, and make instrumentation feel more organized
       self.translator = X86Translator((lambda x: None),self.context)
       self.runtime = X86Runtime(self.context)
+      global assembler
+      import x86_assembler as assembler
     elif arch == 'x86-64':
       raise NotImplementedError( 'WE DO NOT SUPPORT 64-BIT YET' )
     else:

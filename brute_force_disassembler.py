@@ -1,5 +1,4 @@
 import capstone
-import assembler
 from disassembler import Disassembler
 
 class BruteForceDisassembler(Disassembler):

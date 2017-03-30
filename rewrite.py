@@ -28,7 +28,7 @@ def extract_dynamic_libraries(fname, libpath):
   return paths
 
 def rewrite_libraries(libpath,paths):
-  renabler.write_so = True
+  renabler.context.write_so = True
   for path in paths:
     (base,fname) = os.path.split(path)
     libname = os.path.join(libpath,fname)
@@ -67,7 +67,7 @@ if __name__ == '__main__':
     
     if not dynamic_only:
       print 'Rewriting main binary'
-      renabler.write_so = False
+      renabler.context.write_so = False
       renabler.renable(fpath)
     
     print 'Writing runnable .sh'
