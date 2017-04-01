@@ -1,8 +1,6 @@
 import struct
 from mapper import Mapper
 from brute_force_disassembler import BruteForceDisassembler
-from x86_translator import X86Translator
-from x86_runtime import X86Runtime
 
 class BruteForceMapper(Mapper):
   ''' This mapper disassembled from every offset and includes a
@@ -21,12 +19,19 @@ class BruteForceMapper(Mapper):
       #NOTE: We are currently NOT supporting instrumentation because we are passing
       #None to the translator.  TODO: Add back instrumentation after everything gets
       #working again, and make instrumentation feel more organized
+      from x86_translator import X86Translator
+      from x86_runtime import X86Runtime
       self.translator = X86Translator((lambda x: None),self.context)
       self.runtime = X86Runtime(self.context)
       global assembler
       import x86_assembler as assembler
     elif arch == 'x86-64':
-      raise NotImplementedError( 'WE DO NOT SUPPORT 64-BIT YET' )
+      from x64_translator import X64Translator
+      from x64_runtime import X64Runtime
+      self.translator = X64Translator((lambda x: None),self.context)
+      self.runtime = X64Runtime(self.context)
+      global assembler
+      import x64_assembler as assembler
     else:
       raise NotImplementedError( 'Architecture %s is not supported'%arch )
 

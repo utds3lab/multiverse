@@ -106,7 +106,7 @@ def find_newbase(elffile):
   maxaddr += ( 0x1000 - maxaddr%0x1000 ) # Align to page boundary
   return maxaddr
 
-def renable(fname):
+def renable(fname,arch):
   offs = size = addr = 0
   with open(fname,'rb') as f:
     elffile = ELFFile(f)
@@ -156,11 +156,9 @@ def renable(fname):
     for seg in elffile.iter_segments():
       if seg.header['p_flags'] == 5 and seg.header['p_type'] == 'PT_LOAD': #Executable load seg
         print "Base address: %s"%hex(seg.header['p_vaddr'])
-        md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32) #TODO: Allow to toggle 32/64
-        md.detail = True
         bytes = seg.data()
         base = seg.header['p_vaddr']
-        mapper = BruteForceMapper('x86',bytes,base,entry,context)
+        mapper = BruteForceMapper(arch,bytes,base,entry,context)
         mapping = mapper.gen_mapping()
         newbytes = mapper.gen_newcode(mapping)
         #Perhaps I could find a better location to set the value of global_flag
@@ -206,14 +204,14 @@ def renable(fname):
 	print 'code increase: %d%%'%(((len(newbytes)-len(bytes))/float(len(bytes)))*100)
         lookup = mapper.runtime.get_lookup_code(base,len(bytes),context.lookup_function_offset,0x8f)
         print 'lookup w/unknown mapping %s'%len(lookup)
-        insts = md.disasm(lookup,0x0)
-	for ins in insts:
-          print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
+        #insts = md.disasm(lookup,0x0)
+	#for ins in insts:
+        #  print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
         lookup = mapper.runtime.get_lookup_code(base,len(bytes),context.lookup_function_offset,mapping[context.mapping_offset])
         print 'lookup w/known mapping %s'%len(lookup)
-        insts = md.disasm(lookup,0x0)
-	for ins in insts:
-          print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
+        #insts = md.disasm(lookup,0x0)
+	#for ins in insts:
+        #  print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
         if 0x80482b4 in mapping:
 		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
         if 0x804ac40 in mapping:
@@ -277,18 +275,22 @@ def renable(fname):
     print asm(save_register%('eax','eax','eax')).encode('hex')'''
     
 if __name__ == '__main__':
-  if len(sys.argv) == 2:
-    renable(sys.argv[1])
-    #cProfile.run('renable(sys.argv[1])')
-  elif len(sys.argv) == 3 and sys.argv[1] == '-so':
+  import argparse
+
+  parser = argparse.ArgumentParser(description='''Rewrite a binary so that the code is relocated.
+Running this script from the terminal does not allow any instrumentation.
+For that, use this as a library instead.''')
+  parser.add_argument('filename',help='The executable file to rewrite.')
+  parser.add_argument('--so',action='store_true',help='Write a shared object.')
+  parser.add_argument('--execonly',action='store_true',help='Write only a main executable without .so support.')
+  parser.add_argument('--nopic',action='store_true',help='Write binary without support for arbitrary pic.  It still supports common compiler-generated pic.')
+  parser.add_argument('--arch',default='x86',help='The architecture of the binary.  Default is \'x86\'.')
+  args = parser.parse_args()
+  if args.so:
     context.write_so = True
-    renable(sys.argv[2])
-  elif len(sys.argv) == 3 and sys.argv[1] == '-execonly':
+  if args.execonly:
     context.exec_only = True
-    renable(sys.argv[2])
-  elif len(sys.argv) == 4 and ( (sys.argv[1] == '-execonly' and sys.argv[2] == '-nopic') or (sys.argv[2] == '-execonly' and sys.argv[1] == '-nopic') ):
-    context.exec_only = True
+  if args.nopic:
     context.no_pic = True
-    renable(sys.argv[3])
-  else:
-    print "Error: must pass executable filename.\nCorrect usage: %s [-so/[-execonly [-nopic]]] <filename>"%sys.argv[0]
+  renable(args.filename,args.arch)
+
