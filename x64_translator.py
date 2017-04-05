@@ -41,15 +41,15 @@ class X64Translator(Translator):
     jmp [esp-4]		;jmp/call to new address
     '''
     template_before = '''
-    mov [esp-28], eax
-    pop eax
+    mov [rsp-28], rax
+    pop rax
     '''
     template_after = '''
     call $+%s
     %s
-    mov [esp-4], eax
-    mov eax, [esp-%d]
-    jmp [esp-4]
+    mov [rsp-4], rax
+    mov rax, [rsp-%d]
+    jmp [rsp-4]
     '''
     self.context.stat['ret']+=1
     code = b''
@@ -73,7 +73,7 @@ class X64Translator(Translator):
         code+=asm(template_after%(lookup_target,'',32)) #32 because of the value we popped
       else: #For ret instructions that pop imm16 bytes from the stack, add that many bytes to esp
         pop_amt = int(ins.op_str,16) #We need to retrieve the right eax value from where we saved it
-        code+=asm(template_after%(lookup_target,'add esp,%d'%pop_amt,32+pop_amt))
+        code+=asm(template_after%(lookup_target,'add rsp,%d'%pop_amt,32+pop_amt))
     return code
 
   def translate_cond(self,ins,mapping):
@@ -82,17 +82,17 @@ class X64Translator(Translator):
     inserted = self.before_inst_callback(ins)
     if inserted is not None:
       patched += inserted
-    if ins.mnemonic in ['jcxz','jecxz']: #These instructions have no long encoding
-      jcxz_template = '''
-      test cx,cx
+    if ins.mnemonic in ['jrcxz','jecxz']: #These instructions have no long encoding (and jcxz is not allowed in 64-bit)
+      jrcxz_template = '''
+      test rcx,rcx
       '''
       jecxz_template = '''
       test ecx,ecx
       '''
       target = ins.operands[0].imm # int(ins.op_str,16) The destination of this instruction
       #newtarget = remap_target(ins.address,mapping,target,0)
-      if ins.mnemonic == 'jcxz':
-        patched+=asm(jcxz_template)
+      if ins.mnemonic == 'jrcxz':
+        patched+=asm(jrcxz_template)
       else:
         patched+=asm(jecxz_template)
       newtarget = self.remap_target(ins.address,mapping,target,len(patched))
@@ -145,23 +145,17 @@ class X64Translator(Translator):
         exec_call = '''
         push %s
         '''
-        so_call_before = '''
-        push ebx
-        call $+5
-        '''
-        so_call_after = '''
-        pop ebx
-        sub ebx,%s
-        xchg ebx,[esp]
+        so_call = '''
+        push rbx
+        lea rbx,[rip-%s]
+        xchg rbx,[rsp]
         '''
         if self.context.write_so:
-          code += asm(so_call_before)
           if mapping is not None:
-            # Note that if somehow newbase is a very small value we could have problems with the small
-            # encoding of sub.  This could result in different lengths between the mapping and code gen phases
-            code += asm(so_call_after%( (self.context.newbase+(mapping[ins.address]+len(code))) - (ins.address+len(ins.bytes)) ) )
+            # 8 is the length of push rbx;lea rbx,[rip-%s]
+            code += asm(so_call%( (self.context.newbase+(mapping[ins.address]+8)) - (ins.address+len(ins.bytes)) ) )
           else:
-            code += asm(so_call_after%( (self.context.newbase) - (ins.address+len(ins.bytes)) ) )
+            code += asm(so_call%( (self.context.newbase) - (ins.address+len(ins.bytes)) ) )
         else:
           code += asm(exec_call%(ins.address+len(ins.bytes)))
       else:
@@ -193,28 +187,26 @@ class X64Translator(Translator):
     jmp [esp-4]		;jmp to new address
     '''
     template_before = '''
-    mov [esp-32], eax
-    mov eax, %s
+    mov [rsp-32], rax
+    mov rax, %s
     %s
     '''
     exec_call = '''
     push %s
     '''
     so_call_before = '''
-    push ebx
-    call $+5
+    push rbx
     '''
     so_call_after = '''
-    pop ebx
-    sub ebx,%s
-    xchg ebx,[esp]
+    lea rbx,[rip-%s]
+    xchg rbx,[rsp]
     '''
     template_after = '''
     call $+%s
     mov [esp-4], eax
     mov eax, [esp-%s]
     jmp [esp-4]
-    '''
+    ''' #TODO: calling the lookup function will take a different number of bytes on the stack now, as addresses don't fit into 4 bytes anymore
     template_nopic = '''
     call $+%s
     mov [esp-4], eax
@@ -241,11 +233,10 @@ class X64Translator(Translator):
       if self.context.write_so:
         code += asm( template_before%(target,so_call_before) )
         if mapping is not None:
-          code += asm(so_call_after%( (mapping[ins.address]+len(code)+self.context.newbase) - (ins.address+len(ins.bytes)) ) )
-          #print 'CODE LEN/1: %d\n%s'%(len(code),code.encode('hex'))
+          # 7 is the length of the lea rbx,[rip-%s] instruction, which needs to be added to the length of the code preceding where we access RIP
+          code += asm(so_call_after%( (mapping[ins.address]+len(code)+7+self.context.newbase) - (ins.address+len(ins.bytes)) ) )
         else:
           code += asm(so_call_after%( (0x8f+self.context.newbase) - (ins.address+len(ins.bytes)) ) )
-          #print 'CODE LEN/0: %d\n%s'%(len(code),code.encode('hex'))
       else:
         code += asm(template_before%(target,exec_call%(ins.address+len(ins.bytes)) ))
     else:
