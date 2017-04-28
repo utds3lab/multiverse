@@ -9,7 +9,7 @@ class X64Translator(Translator):
   def __init__(self,before_callback,context):
     self.before_inst_callback = before_callback
     self.context = context
-    self.memory_ref_string = re.compile(u'^dword ptr \[(?P<address>0x[0-9a-z]+)\]$')
+    self.memory_ref_string = re.compile(u'^qword ptr \[rip \+ (?P<address>0x[0-9a-z]+)\]$')
     #From Brian's Static_phase.py
     self.JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
       'jc','jnb','jae','jnc','jbe','jna','ja','jnbe','jl','jnge','jge',
@@ -187,7 +187,7 @@ class X64Translator(Translator):
     jmp [esp-4]		;jmp to new address
     '''
     template_before = '''
-    mov [rsp-32], rax
+    mov [rsp-64], rax
     mov rax, %s
     %s
     '''
@@ -203,15 +203,15 @@ class X64Translator(Translator):
     '''
     template_after = '''
     call $+%s
-    mov [esp-4], eax
-    mov eax, [esp-%s]
-    jmp [esp-4]
-    ''' #TODO: calling the lookup function will take a different number of bytes on the stack now, as addresses don't fit into 4 bytes anymore
+    mov [rsp-8], rax
+    mov rax, [rsp-%s]
+    jmp [rsp-8]
+    '''
     template_nopic = '''
     call $+%s
-    mov [esp-4], eax
-    mov eax, [esp-%s]
-    %s [esp-4]
+    mov [rsp-8], rax
+    mov rax, [rsp-%s]
+    %s [rsp-8]
     '''
     #TODO: This is somehow still the bottleneck, so this needs to be optimized
     code = b''
@@ -254,11 +254,11 @@ class X64Translator(Translator):
     if self.context.no_pic:
       #Change target to secondary lookup function instead
       lookup_target = self.remap_target(ins.address,mapping,self.context.secondary_lookup_function_offset,size)
-      code += asm( template_nopic%(lookup_target,32,ins.mnemonic) )
+      code += asm( template_nopic%(lookup_target,64,ins.mnemonic) )
     elif ins.mnemonic == 'call':
-      code += asm(template_after%(lookup_target,28))
+      code += asm(template_after%(lookup_target,56))
     else:  
-      code += asm(template_after%(lookup_target,32))
+      code += asm(template_after%(lookup_target,64))
     return code
   
   def get_remap_callbacks_code(self,insaddr,mapping,target):
