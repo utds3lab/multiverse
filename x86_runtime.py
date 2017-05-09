@@ -275,5 +275,7 @@ class X86Runtime(object):
     #at 0xc0000000 because this boundary is only true for 32-bit kernels.  For 64-bit kernels,
     #the application is able to use most of the entire 4GB address space, and the kernel only
     #holds onto a tiny 8KB at the top of the address space.
-    globalbytes += '\xff'*((0xffffe000>>12)<<2) 
+    globalbytes += '\xff'*((0xffffe000>>12)<<2)
+    if self.context.alloc_globals > 0:
+      globalbytes += '\x00'*self.context.alloc_globals
     return globalbytes

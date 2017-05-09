@@ -19,3 +19,5 @@ class Runtime(object):
     raise NotImplementedError('Override get_auxvec_code() in a child class')
   def get_popgm_code(self):
     raise NotImplementedError('Override get_popgm_code() in a child class')
+  def get_global_mapping_bytes(self):
+    raise NotImplementedError('Override get_global_mapping_bytes() in a child class')

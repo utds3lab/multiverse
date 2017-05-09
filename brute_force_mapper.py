@@ -21,7 +21,7 @@ class BruteForceMapper(Mapper):
       #NOTE: We are currently NOT supporting instrumentation because we are passing
       #None to the translator.  TODO: Add back instrumentation after everything gets
       #working again, and make instrumentation feel more organized
-      self.translator = X86Translator((lambda x: None),self.context)
+      self.translator = X86Translator(context.before_inst_callback,self.context)
       self.runtime = X86Runtime(self.context)
       global assembler
       import x86_assembler as assembler

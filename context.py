@@ -33,3 +33,5 @@ class Context(object):
     #List of library functions that have callback args; each function in the dict has a list of
     #the arguments passed to it that are a callback (measured as the index of which argument it is)
     self.callbacks = {'__libc_start_main':[0,3,4]}
+    self.before_inst_callback = (lambda x: None)
+    self.alloc_globals = 0
