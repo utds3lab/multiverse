@@ -16,7 +16,7 @@ class Context(object):
     self.write_so = False
     self.exec_only = False
     self.no_pic = False
-    self.get_pc_thunk = None
+    self.get_pc_thunk = 0 #Set to zero by default so that if it isn't in the binary, no instruction will match
     self.stat = {}
     self.stat['indcall'] = 0
     self.stat['indjmp'] = 0

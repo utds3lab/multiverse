@@ -158,7 +158,7 @@ class Rewriter(object):
           print 'binary does not contain plt'
       if self.context.write_so:
         print 'Writing as .so file'
-        self.context.newbase = find_newbase(elffile)
+        self.context.newbase = self.find_newbase(elffile)
       elif self.context.exec_only:
         print 'Writing ONLY main binary, without support for rewritten .so files'
         self.context.newbase = 0x09000000
