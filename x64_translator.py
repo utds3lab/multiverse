@@ -41,15 +41,15 @@ class X64Translator(Translator):
     jmp [esp-4]		;jmp/call to new address
     '''
     template_before = '''
-    mov [rsp-28], rax
+    mov [rsp-56], rax
     pop rax
     '''
     template_after = '''
     call $+%s
     %s
-    mov [rsp-4], rax
+    mov [rsp-8], rax
     mov rax, [rsp-%d]
-    jmp [rsp-4]
+    jmp [rsp-8]
     '''
     self.context.stat['ret']+=1
     code = b''
@@ -70,10 +70,10 @@ class X64Translator(Translator):
       else:
         lookup_target = self.remap_target(ins.address,mapping,self.context.lookup_function_offset,size)
       if ins.op_str == '':
-        code+=asm(template_after%(lookup_target,'',32)) #32 because of the value we popped
+        code+=asm(template_after%(lookup_target,'',64)) #32 because of the value we popped
       else: #For ret instructions that pop imm16 bytes from the stack, add that many bytes to esp
         pop_amt = int(ins.op_str,16) #We need to retrieve the right eax value from where we saved it
-        code+=asm(template_after%(lookup_target,'add rsp,%d'%pop_amt,32+pop_amt))
+        code+=asm(template_after%(lookup_target,'add rsp,%d'%pop_amt,64+pop_amt))
     return code
 
   def translate_cond(self,ins,mapping):
@@ -276,31 +276,27 @@ class X64Translator(Translator):
     return b''
   
   def get_callback_code(self,address,mapping,cbargs):
-    '''Remaps each callback argument on the stack based on index.  cbargs is an array of argument indices
-       that let us know where on the stack we must rewrite.  We insert code for each we must rewrite.'''
+    '''Remaps each callback argument based on index.  cbargs is an array of argument indices
+       that let us know which argument (a register in x64) we must rewrite.
+       We insert code for each we must rewrite.'''
+    arg_registers = ['rdi','rsi','rdx','rcx','r8','r9'] #Order of arguments in x86-64
     callback_template_before = '''
-    mov eax, [esp+(%s*4)]
+    mov rax, %s
     '''
     callback_template_after = '''
     call $+%s
-    mov [esp+(%s*4)], eax
+    mov %s, rax
     '''
-    code = asm('push eax') #Save eax, use to hold callback address
+    code = asm('push rax') #Save rax, use to hold callback address
     for ind in cbargs:
-      #Add 2 because we must skip over the saved value of eax and the return value already pushed
-      #ASSUMPTION: before this instruction OR this instruction if it IS a call, a return address was
-      #pushed.  Since this *probably* is taking place inside the PLT, in all probability this is a
-      #jmp instruction, and the call that got us *into* the PLT pushed a return address, so we can't rely
-      #on the current instruction to tell us this either way.  Therefore, we are *assuming* that the PLT
-      #is always entered via a call instruction, or that somebody is calling an address in the GOT directly.
-      #If code ever jmps based on an address in the got, we will probably corrupt the stack.
-      cb_before = callback_template_before%( ind + 2 )
+      #Move value in register for that argument to rax
+      cb_before = callback_template_before%( arg_registers[ind] )
       code += asm(cb_before) #Assemble this part first so we will know the offset to the lookup function
       size = len(code)
       lookup_target = self.remap_target( address, mapping, self.context.lookup_function_offset, size )
-      cb_after = callback_template_after%( lookup_target, ind + 2 )
+      cb_after = callback_template_after%( lookup_target, arg_registers[ind] )
       code += asm(cb_after) #Save the new address over the original
-    code += asm('pop eax') #Restore eax
+    code += asm('pop rax') #Restore rax
     return code
   
   def in_plt(self,target):
@@ -313,6 +309,7 @@ class X64Translator(Translator):
     #entry, we can read the destination address from the jmp instruction.
     #TODO: ensure works for x64
     offset = target - self.context.plt['addr'] #Get the offset into the plt
+    #TODO: The following assumes an absolute jmp, whereas I believe it is a rip-relative jmp in x64
     dest = self.context.plt['data'][offset+2:offset+2+4] #Get the four bytes of the GOT address
     dest = struct.unpack('<I',dest)[0] #Convert to integer, respecting byte endianness
     if dest in self.context.plt['entries']:

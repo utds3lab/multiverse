@@ -105,6 +105,7 @@ class BruteForceMapper(Mapper):
         target = last.address + len(last.bytes) #address of where in the original code we would want to jmp to
         next_target = self.translator.remap_target(last.address, mapping, target, len(bytemap[last.address]) )
         reroute = assembler.asm( 'jmp $+%s'%(next_target) )
+        #Maximum relative displacement is 32 for x86 and x64, so this works for both platforms
         if len(reroute) == 2: #Short encoding, which we do not want
           reroute+='\x90\x90\x90' #Add padding of 3 NOPs
         bytemap[last.address] += reroute

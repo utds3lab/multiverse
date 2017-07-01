@@ -253,13 +253,26 @@ class X64Runtime(object):
     return _asm(auxvec_template%(self.context.global_sysinfo,self.context.global_lookup+self.context.popgm_offset,self.context.newbase+entry))
 
   def get_popgm_code(self):
-    #TODO: pushad and popad do NOT exist in x64, so we must choose which registers must be preserved at program start
+    #pushad and popad do NOT exist in x64,
+    #so we must choose which registers must be preserved at program start
     call_popgm = '''
-    pushad
+    push rax
+    push rcx
+    push rdx
+    push rbx
+    push rbp
+    push rsi
+    push rdi
     push %s
     call $+0xa
     add esp,4
-    popad
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rbx
+    pop rdx
+    pop rcx
+    pop rax
     ret
     '''
     popgmbytes = asm(call_popgm%(self.context.global_sysinfo+4))
