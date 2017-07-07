@@ -31,6 +31,7 @@ class X64Runtime(object):
     failure:
   	hlt
     '''
+    #TODO: support lookup for binary/library combination
     lookup_template = '''
   	push ebx
   	mov ebx,eax
@@ -65,28 +66,25 @@ class X64Runtime(object):
     '''
     exec_only_lookup = '''
     lookup:
-  	push ebx
-  	mov ebx,eax
-  	call get_eip
-    get_eip:
-  	pop eax
-  	sub eax,%s
-  	sub ebx,%s
+  	push rbx
+  	mov rbx,rax
+  	lea rax, [rip-%s]
+  	sub rbx,%s
   	jb outside
-  	cmp ebx,%s
+  	cmp rbx,%s
   	jae outside
-  	mov ebx,[eax+ebx*4+%s]
-  	add eax,ebx
-  	pop ebx
+  	mov rbx,[rax+rbx*4+%s]
+  	add rax,rbx
+  	pop rbx
   	ret
   
     outside:
-  	add ebx,%s
-  	mov eax,[esp+8]
+  	add rbx,%s
+  	mov rax,[rsp+16]
   	call lookup
-  	mov [esp+8],eax
-  	mov eax,ebx
-  	pop ebx
+  	mov [rsp+16],rax
+  	mov rax,rbx
+  	pop rbx
   	ret
     '''
     #For an .so, it can be loaded at an arbitrary address, so we cannot depend on
@@ -95,6 +93,7 @@ class X64Runtime(object):
     #from it.  The new text section's offset equals the lookup address and is
     #stored in eax.  I use lea instead of add because it doesn't affect the flags,
     #which are used to determine if ebx is outside the range.
+    #TODO: Support .so rewriting
     so_code = '''
     	sub eax,%s
     	sub ebx,eax
@@ -122,68 +121,70 @@ class X64Runtime(object):
        This is a cleaner way to do it than split the original lookup to have two entry points.'''
     secondary_lookup = '''
     lookup:
-  	push ebx
-  	mov ebx,eax
-  	call get_eip
-    get_eip:
-  	pop eax
-  	sub eax,%s
-  	sub ebx,%s
+  	push rbx
+  	mov rbx,rax
+        lea rax, [rip-%s]
+  	sub rbx,%s
   	jb outside
-  	cmp ebx,%s
+  	cmp rbx,%s
   	jae outside
-  	mov ebx,[eax+ebx*4+%s]
-  	add eax,ebx
-  	pop ebx
+  	mov rbx,[rax+rbx*4+%s]
+  	add rax,rbx
+  	pop rbx
   	ret
   
     outside:
-  	add ebx,%s
-  	mov eax,ebx
-  	pop ebx
+  	add rbx,%s
+  	mov rax,rbx
+  	pop rbx
   	ret
     '''
-    return _asm( secondary_lookup%(sec_lookup_off+8,base,size,mapping_off,base) )
+    return _asm( secondary_lookup%(sec_lookup_off+4,base,size,mapping_off,base) )
 
   def get_global_lookup_code(self):
-    global_lookup_template = '''
-    	cmp eax,[%s]
+    #TODO: Support global lookup, executable + library rewriting
+    #I have to modify it so it will assemble since we write out the global lookup
+    #regardless of whether it's used, but it obviously won't work in this state...
+    global_lookup_template = '''hlt'''
+    '''
+    	cmp rax,[%s]
     	jz sysinfo
     glookup:
     	cmp BYTE PTR [gs:%s],1
     	jz failure
     	mov BYTE PTR [gs:%s],1
-    	push eax
-    	shr eax,12
-    	shl eax,2
-    	mov eax,[%s+eax]
-    	mov DWORD PTR [esp-32],eax
+    	push rax
+    	shr rax,12
+    	shl rax,2
+    	mov rax,[%s+rax]
+    	mov DWORD PTR [rsp-32],rax
     	cmp eax, 0xffffffff
     	jz abort
-    	test eax,eax
+    	test rax,rax
     	jz loader
-    	pop eax
-          call [esp-36]
+    	pop rax
+          call [rsp-36]
     	mov BYTE PTR [gs:%s],0
     	ret
     loader:
     	mov BYTE PTR [gs:%s],0
-    	pop eax
+    	pop rax
     sysinfo:
-    	push eax
-    	mov eax,[esp+8]
+    	push rax
+    	mov rax,[rsp+8]
     	call glookup
-    	mov [esp+8],eax
-    	pop eax
+    	mov [rsp+8],rax
+    	pop rax
   	ret
     failure:
     	hlt
     abort:
     	hlt
-    	mov eax,1
+    	mov rax,1
     	int 0x80
     '''
-    return _asm(global_lookup_template%(self.context.global_sysinfo,self.context.global_flag,self.context.global_flag,self.context.global_sysinfo+4,self.context.global_flag,self.context.global_flag))
+    return _asm(global_lookup_template)
+    #return _asm(global_lookup_template%(self.context.global_sysinfo,self.context.global_flag,self.context.global_flag,self.context.global_sysinfo+4,self.context.global_flag,self.context.global_flag))
 
   def get_auxvec_code(self,entry):
     #Example assembly for searching the auxiliary vector
@@ -219,36 +220,36 @@ class X64Runtime(object):
   	jmp realstart
     '''
     auxvec_template = '''
-  	mov [esp-4],esi
-  	mov [esp-8],ecx
-  	mov esi,[esp]
-  	mov ecx,esp
-  	lea ecx,[ecx+esi*4+4]
+  	mov [rsp-8],rsi
+  	mov [rsp-16],rcx
+  	mov rsi,[rsp]
+  	mov rcx,rsp
+  	lea rcx,[rcx+rsi*8+8]
     loopenv:
-  	add ecx,4
-  	mov esi,[ecx]
-  	test esi,esi
+  	add rcx,8
+  	mov rsi,[rcx]
+  	test rsi,rsi
   	jnz loopenv
-  	add ecx,4
+  	add rcx,8
     loopaux:
-  	mov esi,[ecx]
-  	cmp esi,32
+  	mov rsi,[rcx]
+  	cmp rsi,32
   	jz foundsysinfo
-  	test esi,esi
+  	test rsi,rsi
   	jz restore
-  	add ecx,8
+  	add rcx,16
   	jmp loopaux
     foundsysinfo:
-  	mov esi,[ecx+4]
-  	mov [%s],esi
+  	mov rsi,[rcx+8]
+  	mov [%s],rsi
     restore:
-  	mov esi,[esp-4]
-  	mov ecx,[esp-8]
+  	mov rsi,[rsp-8]
+  	mov rcx,[rsp-16]
     	push %s
-    	call [esp]
-    	add esp,4
-    	mov DWORD PTR [esp-12], %s
-  	jmp [esp-12]
+    	call [rsp]
+    	add rsp,8
+    	mov DWORD PTR [rsp-16], %s
+  	jmp [rsp-16]
     '''
     return _asm(auxvec_template%(self.context.global_sysinfo,self.context.global_lookup+self.context.popgm_offset,self.context.newbase+entry))
 
@@ -281,6 +282,7 @@ class X64Runtime(object):
     return popgmbytes
 
   def get_global_mapping_bytes(self):
+    #TODO: support global mapping
     globalbytes = self.get_global_lookup_code()
     #globalbytes+='\0' #flag field
     globalbytes += self.get_popgm_code()
