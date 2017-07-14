@@ -9,11 +9,11 @@ class X64Translator(Translator):
   def __init__(self,before_callback,context):
     self.before_inst_callback = before_callback
     self.context = context
-    self.memory_ref_string = re.compile(u'^qword ptr \[rip \+ (?P<address>0x[0-9a-z]+)\]$')
+    self.memory_ref_string = re.compile(u'^qword ptr \[(?P<rip>0x[0-9a-z]+) \+ (?P<offset>0x[0-9a-z]+)\]$')
     #From Brian's Static_phase.py
     self.JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
       'jc','jnb','jae','jnc','jbe','jna','ja','jnbe','jl','jnge','jge',
-      'jnl','jle','jng','jg','jnle','jp','jpe','jnp','jpo','jcxz','jecxz']
+      'jnl','jle','jng','jg','jnle','jp','jpe','jnp','jpo','jrcxz','jecxz']
 
   def translate_one(self,ins,mapping):
     if ins.mnemonic in ['call','jmp']: #Unconditional jump
@@ -27,8 +27,21 @@ class X64Translator(Translator):
       return '\xf4\xf4\xf4\xf4' #Create obvious cluster of hlt instructions
     else: #Any other instruction
       inserted = self.before_inst_callback(ins)
-      if inserted is not None:
-        return inserted + str(ins.bytes)
+      #Even for non-control-flow instructions, we need to replace all references to rip
+      #with the address pointing directly after the instruction.
+      #TODO: This will NOT work for shared libraries or any PIC, because it depends on
+      #knowing the static instruction address.  For all shared objects, we would need to
+      #subtract off the offset between the original and new text; as long as the offset is
+      #fixed, then we should be able to just precompute that offset, without it being affected
+      #by the position of the .so code
+      if 'rip' in ins.op_str:
+        code = asm( '%s %s'%(ins.mnemonic, ins.op_str.replace( 'rip', hex(ins.address+len(ins.bytes)) ) ) )
+        if inserted is not None:
+          code = inserted + code
+        return code
+      else:
+        if inserted is not None:
+          return inserted + str(ins.bytes)
       return None #No translation needs to be done
 
   def translate_ret(self,ins,mapping):
@@ -186,6 +199,9 @@ class X64Translator(Translator):
     mov eax, [esp-%s]	;restore old eax value (offset depends on whether return address pushed)
     jmp [esp-4]		;jmp to new address
     '''
+    #If the argument is an offset from rip, then we must change the reference to rip.  Any rip-relative
+    #addressing is destroyed because all the offsets are completely different; we need the 
+    #original address that rip WOULD have pointed to, so we must replace any references to it.
     template_before = '''
     mov [rsp-64], rax
     mov rax, %s
@@ -213,6 +229,12 @@ class X64Translator(Translator):
     mov rax, [rsp-%s]
     %s [rsp-8]
     '''
+    #TODO: this will not work for shared objects because we need to add the base address that
+    #the library is loaded at to the pre-randomization offset we can obtain statically.
+    #Replace references to rip with the original address after this instruction so that we
+    #can look up the new address using the original
+    if 'rip' in target:
+      target = target.replace( 'rip',hex(ins.address+len(ins.bytes)) )
     #TODO: This is somehow still the bottleneck, so this needs to be optimized
     code = b''
     if self.context.exec_only:
@@ -265,10 +287,12 @@ class X64Translator(Translator):
     '''Checks whether the target destination (expressed as the opcode string from a jmp/call instruction)
        is in the got, then checks if it matches a function with callbacks.  It then rewrites the
        addresses if necessary.  This will *probably* always be from jmp instructions in the PLT.
-       NOTE: This assumes it does not have any code inserted before it, and that it comprises the first
-       special instructions inserted for an instruction.'''
+       NOTE: This assumes it does not have any code inserted before it, and that it comprises
+       the first special instructions inserted for an instruction.'''
     if self.memory_ref_string.match(target):
-      address = int(self.memory_ref_string.match(target).group('address'), 16)
+      match = self.memory_ref_string.match(target)
+      #Add address of instruction after this one and the offset to get destination
+      address = int(match.group('rip'), 16) + int(match.group('offset'), 16)
       if address in self.context.plt['entries']:
         if self.context.plt['entries'][address] in self.context.callbacks:
           print 'Found library call with callbacks: %s'%self.context.plt['entries'][address]
@@ -302,7 +326,7 @@ class X64Translator(Translator):
   def in_plt(self,target):
     return target in range(self.context.plt['addr'],self.context.plt['addr']+self.context.plt['size'])
   
-  def get_plt_entry(self,target):
+  '''def get_plt_entry(self,target):
     #It seems that an elf does not directly give a mapping from each entry in the plt.
     #Instead, it maps from the got entries instead, making it unclear exactly where objdump
     #gets the information.  For our purposes, since all the entries in the plt jump to the got
@@ -315,6 +339,7 @@ class X64Translator(Translator):
     if dest in self.context.plt['entries']:
       return self.context.plt['entries'][dest] #If there is an entry, return that; the name of the function
     return None #Some entries may be a jump to the start of the plt (no entry)
+'''
   
   def remap_target(self,addr,mapping,target,offs): #Only works for statically identifiable targets
     newtarget = '0x8f'

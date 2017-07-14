@@ -64,6 +64,9 @@ class X64Runtime(object):
     exec_restore = '''
     	add ebx,%s
     '''
+    #Notice that we only move a DWORD from the mapping (into ebx) because the
+    #mapping only stores 4-byte offsets.  Therefore, if a text section is >4GB,
+    #this mapping strategy will fail
     exec_only_lookup = '''
     lookup:
   	push rbx
@@ -73,7 +76,7 @@ class X64Runtime(object):
   	jb outside
   	cmp rbx,%s
   	jae outside
-  	mov rbx,[rax+rbx*4+%s]
+  	mov ebx, [rax+rbx*4+%s]
   	add rax,rbx
   	pop rbx
   	ret
@@ -108,7 +111,7 @@ class X64Runtime(object):
     if self.context.write_so:
       return _asm(lookup_template%(lookup_off+8,so_code%(self.context.newbase,self.context.newbase),size,mapping_off,so_restore%(self.context.newbase,self.context.newbase),self.context.global_lookup))
     elif self.context.exec_only:
-      return _asm( exec_only_lookup%(lookup_off+8,base,size,mapping_off,base) )
+      return _asm( exec_only_lookup%(lookup_off+11,base,size,mapping_off,base) )
     else:
       return _asm(lookup_template%(lookup_off+8,exec_code%base,size,mapping_off,exec_restore%base,self.context.global_lookup))
 
@@ -119,6 +122,9 @@ class X64Runtime(object):
        it.  The only reason I'm doing this by way of a secondary lookup is this should be faster than a
        a parameter passed at runtime, so I need to statically have an offset to jump to in the case of returns.
        This is a cleaner way to do it than split the original lookup to have two entry points.'''
+    #Notice that we only move a DWORD from the mapping (into ebx) because the
+    #mapping only stores 4-byte offsets.  Therefore, if a text section is >4GB,
+    #this mapping strategy will fail
     secondary_lookup = '''
     lookup:
   	push rbx
@@ -128,7 +134,7 @@ class X64Runtime(object):
   	jb outside
   	cmp rbx,%s
   	jae outside
-  	mov rbx,[rax+rbx*4+%s]
+  	mov ebx,[rax+rbx*4+%s]
   	add rax,rbx
   	pop rbx
   	ret
@@ -139,7 +145,7 @@ class X64Runtime(object):
   	pop rbx
   	ret
     '''
-    return _asm( secondary_lookup%(sec_lookup_off+4,base,size,mapping_off,base) )
+    return _asm( secondary_lookup%(sec_lookup_off+11,base,size,mapping_off,base) )
 
   def get_global_lookup_code(self):
     #TODO: Support global lookup, executable + library rewriting
@@ -256,6 +262,9 @@ class X64Runtime(object):
   def get_popgm_code(self):
     #pushad and popad do NOT exist in x64,
     #so we must choose which registers must be preserved at program start
+    #TODO: For now we skip actually calling popgm, because it will have to be
+    #completely re-engineered, so we will need to change the offset to 0x11 
+    #once we have fixed popgm for x64
     call_popgm = '''
     push rax
     push rcx
@@ -265,8 +274,8 @@ class X64Runtime(object):
     push rsi
     push rdi
     push %s
-    call $+0xa
-    add esp,4
+    call $+0x10
+    add rsp,8
     pop rdi
     pop rsi
     pop rbp

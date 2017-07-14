@@ -39,6 +39,8 @@ class Context(object):
 #determined by the host reloc table's 'sh_link' entry.  In our case it's the dynsym table.
 def ELF32_R_SYM(val):
   return (val) >> 8
+def ELF64_R_SYM(val):
+  return (val) >> 32
 
 #Globals: If there end up being too many of these, put them in a Context & pass them around
 context = Context()
@@ -111,6 +113,7 @@ def renable(fname,arch):
   with open(fname,'rb') as f:
     elffile = ELFFile(f)
     relplt = None
+    relaplt = None
     dynsym = None
     entry = elffile.header.e_entry #application entry point
     for section in elffile.iter_sections():
@@ -123,8 +126,10 @@ def renable(fname,arch):
         context.plt['addr'] = section.header['sh_addr']
         context.plt['size'] = section.header['sh_size']
         context.plt['data'] = section.data()
-      if section.name == '.rel.plt': #TODO: x64 has .rela.plt
+      if section.name == '.rel.plt':
         relplt = section
+      if section.name == '.rela.plt': #x64 has .rela.plt
+        relaplt = section
       if section.name == '.dynsym':
         dynsym = section
       if section.name == '.symtab':
@@ -140,6 +145,14 @@ def renable(fname,arch):
         if dynsym:
           name = dynsym.get_symbol(ds_ent).name #Get name of symbol
           context.plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
+    elif relaplt is not None:
+      for rel in relaplt.iter_relocations():
+        got_off = rel['r_offset'] #Get GOT offset address for this entry
+        ds_ent = ELF64_R_SYM(rel['r_info']) #Get offset into dynamic symbol table
+        if dynsym:
+          name = dynsym.get_symbol(ds_ent).name #Get name of symbol
+          context.plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
+      print context.plt
     else:
         print 'binary does not contain plt'
     if context.write_so:
