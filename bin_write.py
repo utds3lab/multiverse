@@ -1,7 +1,7 @@
 #import sys
 #sys.path.insert(0,'/home/erick/git/delinker/Delinker/src')
-from elfmanip.ELFManip import ELFManip, Custom_Section, Custom_Segment
-from elfmanip.Constants import PT_LOAD, SHF_TLS, PT_TLS
+from elfmanip.elfmanip import ELFManip, CustomSection, CustomSegment
+from elfmanip.constants import PT_LOAD, SHF_TLS, PT_TLS
 
 from elftools.elf.elffile import ELFFile
 
@@ -59,10 +59,10 @@ def rewrite_noglobal(fname,nname,newcode,newbase,entry):
   with open(newcode) as f:
     newbytes = f.read()
     elf.relocate_phdrs()
-    newtext_section = Custom_Section(newbytes, sh_addr = newbase)
+    newtext_section = CustomSection(newbytes, sh_addr = newbase)
     if newtext_section is None:
       raise Exception
-    newtext_segment = Custom_Segment(PT_LOAD)
+    newtext_segment = CustomSegment(PT_LOAD)
     newtext_segment = elf.add_segment(newtext_segment)
     elf.add_section(newtext_section, newtext_segment)
     elf.set_entry_point(entry)
@@ -74,22 +74,22 @@ def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry):
   with open(newcode) as f:
     newbytes = f.read()
     elf.relocate_phdrs()
-    newtext_section = Custom_Section(newbytes, sh_addr = newbase)
-    newglobal_section = Custom_Section(newglobal, sh_addr = newglobalbase)
-    newtls_section = Custom_Section(newtls, sh_addr = newglobalbase-0x10000) #TODO: make this address flexible
+    newtext_section = CustomSection(newbytes, sh_addr = newbase)
+    newglobal_section = CustomSection(newglobal, sh_addr = newglobalbase)
+    newtls_section = CustomSection(newtls, sh_addr = newglobalbase-0x10000) #TODO: make this address flexible
     if newtext_section is None or newglobal_section is None:
       raise Exception
-    newtext_segment = Custom_Segment(PT_LOAD)
+    newtext_segment = CustomSegment(PT_LOAD)
     newtext_segment = elf.add_segment(newtext_segment)
-    newglobal_segment = Custom_Segment(PT_LOAD)
+    newglobal_segment = CustomSegment(PT_LOAD)
     newglobal_segment = elf.add_segment(newglobal_segment)
     elf.add_section(newtext_section, newtext_segment)
     elf.add_section(newglobal_section, newglobal_segment)
     
-    newtls_segment = Custom_Segment(PT_LOAD)
+    newtls_segment = CustomSegment(PT_LOAD)
     newtls_segment = elf.add_segment(newtls_segment)
     elf.add_section(newtls_section, newtls_segment)
-    newtls_segment = Custom_Segment(PT_TLS, p_align=4)
+    newtls_segment = CustomSegment(PT_TLS, p_align=4)
     newtls_segment = elf.add_segment(newtls_segment)
     elf.add_section(newtls_section, newtls_segment)
 
