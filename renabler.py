@@ -152,7 +152,7 @@ def renable(fname,arch):
         if dynsym:
           name = dynsym.get_symbol(ds_ent).name #Get name of symbol
           context.plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
-      print context.plt
+      #print context.plt
     else:
         print 'binary does not contain plt'
     if context.write_so:

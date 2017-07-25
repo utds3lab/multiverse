@@ -34,7 +34,12 @@ class X64Translator(Translator):
       #subtract off the offset between the original and new text; as long as the offset is
       #fixed, then we should be able to just precompute that offset, without it being affected
       #by the position of the .so code
-      if 'rip' in ins.op_str:
+      #TODO: abandon rewriting ljmp instructions for now because the assembler doesn't like them
+      #and we haven't been rewriting their destinations anyway; if they *are* used, they were already
+      #broken before this 
+      if 'rip' in ins.op_str and ins.mnemonic != 'ljmp':
+        if ins.mnemonic == 'ljmp':
+          print 'WARNING: unhandled %s %s @ %x'%(ins.mnemonic,ins.op_str,ins.address)
         code = asm( '%s %s'%(ins.mnemonic, ins.op_str.replace( 'rip', hex(ins.address+len(ins.bytes)) ) ) )
         if inserted is not None:
           code = inserted + code
