@@ -74,7 +74,13 @@ class X64Translator(Translator):
     inserted = self.before_inst_callback(ins)
     if inserted is not None:
       code += inserted
-    if self.context.no_pic and ins.address != self.context.get_pc_thunk + 3:
+    # Since thunks do not need to be used for 64-bit code, there is no specific
+    # place we need to treat as a special case.  It is unlikely that code will
+    # try to use the pushed return address to obtain the instruction pointer 
+    # (after all, it can just access it directly!), but should it TRY to do this,
+    # the program will crash!  Thus the no_pic optimization is a heuristic that
+    # won't work for some code (in this case only very unusual code?)
+    if self.context.no_pic: # and ins.address != self.context.get_pc_thunk + 3:
       #Perform a normal return UNLESS this is the ret for the thunk.
       #Currently its position is hardcoded as three bytes after the thunk entry.
       code = asm( 'ret %s'%ins.op_str )
@@ -151,7 +157,8 @@ class X64Translator(Translator):
       inserted = self.before_inst_callback(ins)
       if inserted is not None:
         code += inserted
-      if self.context.no_pic and target != self.context.get_pc_thunk:
+      # Again, there is no thunk special case for 64-bit code
+      if self.context.no_pic: # and target != self.context.get_pc_thunk:
         #push nothing if no_pic UNLESS it's the thunk
         #We only support DIRECT calls to the thunk
         if ins.mnemonic == 'call':
@@ -182,7 +189,8 @@ class X64Translator(Translator):
       #print "(pre)new length: %s"%len(callback_code)
       #print "target: %s"%hex(target)
       #print "newtarget: %s"%newtarget
-      if self.context.no_pic and target != self.context.get_pc_thunk:
+      # Again, there is no thunk special case for 64-bit code
+      if self.context.no_pic: # and target != self.context.get_pc_thunk:
         code += asm( '%s $+%s'%(ins.mnemonic,newtarget) )
       else:
         patched = asm('jmp $+%s'%newtarget)
@@ -322,7 +330,8 @@ class X64Translator(Translator):
       cb_before = callback_template_before%( arg_registers[ind] )
       code += asm(cb_before) #Assemble this part first so we will know the offset to the lookup function
       size = len(code)
-      lookup_target = self.remap_target( address, mapping, self.context.lookup_function_offset, size )
+      #Use secondary lookup function so it won't try to rewrite arguments if the callback is outside the main binary
+      lookup_target = self.remap_target( address, mapping, self.context.secondary_lookup_function_offset, size )
       cb_after = callback_template_after%( lookup_target, arg_registers[ind] )
       code += asm(cb_after) #Save the new address over the original
     code += asm('pop rax') #Restore rax
