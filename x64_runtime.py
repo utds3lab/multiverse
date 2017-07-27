@@ -286,7 +286,7 @@ class X64Runtime(object):
     ret
     '''
     popgmbytes = asm(call_popgm%(self.context.global_sysinfo+4))
-    with open(self.context.popgm) as f:
+    with open('x64_%s' % self.context.popgm) as f:
       popgmbytes+=f.read()
     return popgmbytes
 

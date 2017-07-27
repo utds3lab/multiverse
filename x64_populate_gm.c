@@ -1,7 +1,7 @@
 /*
- * debug: gcc -m32 -Wall -DDEBUG -fno-toplevel-reorder -masm=intel -O1 populate_gm.c
- * build: gcc -m32 -Wall -nostdlib -fno-toplevel-reorder -masm=intel -O1 populate_gm.c
- * dd if=a.out of=popgm skip=text_offset bs=1 count=text_size
+ * debug: gcc -o x64_populate_gm -Wall -DDEBUG -fno-toplevel-reorder -masm=intel -O1 x64_populate_gm.c
+ * build: gcc -o x64_populate_gm -Wall -nostdlib -fno-toplevel-reorder -masm=intel -O1 x64_populate_gm.c
+ * dd if=x64_populate_gm of=x64_popgm skip=text_offset bs=1 count=text_size
  *
  * Read and parse /proc/self/maps filling in the global mapping
  *
@@ -96,8 +96,8 @@ unsigned int lookup(unsigned int addr, unsigned int *global_mapping){
 #endif
 
 unsigned int __attribute__ ((noinline)) my_read(int fd, char *buf, unsigned int count){
-	unsigned int bytes_read;
-	asm volatile(
+	unsigned int bytes_read = 0;
+	/*asm volatile(
 		".intel_syntax noprefix\n"
 		"mov eax, 3\n"
 		"mov ebx, %1\n"
@@ -108,13 +108,13 @@ unsigned int __attribute__ ((noinline)) my_read(int fd, char *buf, unsigned int 
 		: "=g" (bytes_read)
 		: "g" (fd), "g" (buf), "g" (count)
 		: "ebx", "esi", "edi"
-	);
+	);*/
 	return bytes_read;
 }
 
 int __attribute__ ((noinline)) my_open(const char *path){
-	int fp;
-	asm volatile(
+	int fp = 0;
+	/*asm volatile(
 		".intel_syntax noprefix\n"
 		"mov eax, 5\n"
 		"mov ebx, %1\n"
@@ -125,7 +125,7 @@ int __attribute__ ((noinline)) my_open(const char *path){
 		: "=r" (fp)
 		: "g" (path)
 		: "ebx", "esi", "edi"
-	);
+	);*/
 	return fp;
 }
 

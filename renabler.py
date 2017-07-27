@@ -255,7 +255,8 @@ def renable(fname,arch):
               context.secondary_lookup_function_offset,mapping[context.mapping_offset]))
         if not context.write_so:
           context.stat['auxvecsize'] = len(mapper.runtime.get_auxvec_code(mapping[entry]))
-          with open(context.popgm) as f:
+          popgm = 'x86_popgm' if arch == 'x86' else 'x64_popgm' # TODO: if other architectures are added, this will need to be changed
+          with open(popgm) as f:
             tmp=f.read()
             context.stat['popgmsize'] = len(tmp)
           context.stat['globmapsectionsize'] = len(mapper.runtime.get_global_mapping_bytes())

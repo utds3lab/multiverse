@@ -33,7 +33,7 @@ def rewrite_libraries(libpath,paths):
     (base,fname) = os.path.split(path)
     libname = os.path.join(libpath,fname)
     shutil.copy(path,libname)
-    renabler.renable(libname)
+    renabler.renable(libname,'x86')
     os.remove(libname)
     shutil.move(libname+'-r',libname)
     shutil.move(libname+'-r-map.json',libname+'-map.json')
@@ -68,7 +68,7 @@ if __name__ == '__main__':
     if not dynamic_only:
       print 'Rewriting main binary'
       renabler.context.write_so = False
-      renabler.renable(fpath)
+      renabler.renable(fpath,'x86')
     
     print 'Writing runnable .sh'
     with open(fpath+'-r.sh', 'w') as f:

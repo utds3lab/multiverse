@@ -262,7 +262,7 @@ class X86Runtime(object):
     ret
     '''
     popgmbytes = asm(call_popgm%(self.context.global_sysinfo+4))
-    with open(self.context.popgm) as f:
+    with open('x86_%s' % self.context.popgm) as f:
       popgmbytes+=f.read()
     return popgmbytes
 
