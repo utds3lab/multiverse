@@ -3,7 +3,6 @@
 # containing only the raw bytes of the .text section.
 re='.text[[:space:]]+PROGBITS[[:space:]]+[0-9a-f]+[[:space:]]+([0-9a-f]+)[[:space:]]+([0-9a-f]+)'
 textsection=$(readelf -S -W x86_populate_gm | grep '.text') 
-echo "yo $textsection"
 if [[ ${textsection} =~ ${re} ]]; then 
 	dd if=x86_populate_gm of=x86_popgm skip=$((0x${BASH_REMATCH[1]})) bs=1 count=$((0x${BASH_REMATCH[2]})) 
 fi 

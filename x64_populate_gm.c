@@ -27,16 +27,22 @@
 #define NULL ( (void *) 0)
 #endif
 
+struct gm_entry {
+	unsigned long lookup_function;
+	unsigned long start;
+	unsigned long length;
+};
+
 unsigned int __attribute__ ((noinline)) my_read(int, char *, unsigned int);
 int __attribute__ ((noinline)) my_open(const char *);
-void populate_mapping(unsigned int, unsigned int, unsigned int, unsigned int *);
-void process_maps(char *, unsigned int *);
-unsigned int lookup(unsigned int, unsigned int *);
+void populate_mapping(unsigned int, unsigned int, unsigned int, unsigned int, struct gm_entry *);
+void process_maps(char *, struct gm_entry *);
+struct gm_entry lookup(unsigned long, struct gm_entry *);
 
 #ifdef DEBUG
-int wrapper(unsigned int *global_mapping){
+int wrapper(struct gm_entry *global_mapping){
 #else
-int _start(void *global_mapping){
+int _start(struct gm_entry *global_mapping){
 #endif
 	// force string to be stored on the stack even with optimizations
 	//char maps_path[] = "/proc/self/maps\0";
@@ -64,7 +70,8 @@ int _start(void *global_mapping){
 #ifdef DEBUG
 	printf("READ:\n%s\n", buf);
 	// simulation for testing - dont call process maps
-	populate_mapping(0x08800000, 0x08880000, 0x07000000, global_mapping);
+	populate_mapping(1, 0x08800000, 0x08880000, 0x07000000, global_mapping);
+	populate_mapping(2, 0x09900000, 0x09990000, 0x07800000, global_mapping);
 	/*
 	int i;
 	for (i = 0x08800000; i < 0x08880000; i++){
@@ -73,10 +80,17 @@ int _start(void *global_mapping){
 		}
 	}
 	*/
-	//chedck edge cases
+	//check edge cases
 
+	printf("Testing %x (out of range)\n",0x08800000-1);
 	lookup(0x08800000-1, global_mapping);
+	printf("Testing %x (in range)\n",0x08800000);
 	lookup(0x08800000, global_mapping);
+	printf("Testing %x (in range)\n",0x08800001);
+	lookup(0x08800001, global_mapping);
+	printf("Testing %x (in range)\n",0x08880000);
+	lookup(0x08880000, global_mapping);
+	printf("Testing %x (out of range)\n",0x08880000+1);
 	lookup(0x08880000+1, global_mapping);
 	//printf("0x08812345 => 0x%08x\n", lookup(0x08812345, global_mapping));
 #else
@@ -86,58 +100,70 @@ int _start(void *global_mapping){
 }
 
 #ifdef DEBUG
-unsigned int lookup(unsigned int addr, unsigned int *global_mapping){
-	unsigned int index = addr >> 12;
-	//if (global_mapping[index] == 0xffffffff){
-		printf("0x%08x :: mapping[%d] :: &0x%p :: 0x%08x\n", addr, index, &(global_mapping[index]), global_mapping[index]);
-	//}
+struct gm_entry lookup(unsigned long addr, struct gm_entry *global_mapping){
+	unsigned int index;
+	//unsigned long gm_size = global_mapping[0].lookup_function;//Size is stored in first entry
+	global_mapping++;//Now we point at the true first entry
+	//Use binary search on the already-sorted entries (doing linear search for testing purposes)
+	for(index = 0; index < 10; index++){
+		//printf("SEARCHING 0x%lx :: mapping[%d] :: 0x%lx :: 0x%lx :: 0x%lx\n", addr, index, global_mapping[index].lookup_function, global_mapping[index].start, global_mapping[index].length);
+		if( addr - global_mapping[index].start <= global_mapping[index].length){
+			printf("0x%lx :: mapping[%d] :: 0x%lx :: 0x%lx :: 0x%lx\n", addr, index, global_mapping[index].lookup_function, global_mapping[index].start, global_mapping[index].length);
+		}
+	}
 	return global_mapping[index];
 }
 #endif
 
 unsigned int __attribute__ ((noinline)) my_read(int fd, char *buf, unsigned int count){
-	unsigned int bytes_read = 0;
-	/*asm volatile(
+	unsigned long bytes_read;
+	asm volatile(
 		".intel_syntax noprefix\n"
-		"mov eax, 3\n"
-		"mov ebx, %1\n"
-		"mov ecx, %2\n"
-		"mov edx, %3\n"
-		"int 0x80\n"
-		"mov %0, eax\n"
+		"mov rax, 0\n"
+		"mov rdi, %1\n"
+		"mov rsi, %2\n"
+		"mov rdx, %3\n"
+		"syscall\n"
+		"mov %0, rax\n"
 		: "=g" (bytes_read)
-		: "g" (fd), "g" (buf), "g" (count)
-		: "ebx", "esi", "edi"
-	);*/
-	return bytes_read;
+		: "g" ((long)fd), "g" (buf), "g" ((long)count)
+		: "rcx", "r11"
+	);
+	return (unsigned int) bytes_read;
 }
 
 int __attribute__ ((noinline)) my_open(const char *path){
-	int fp = 0;
-	/*asm volatile(
+	unsigned long fp;
+	asm volatile(
 		".intel_syntax noprefix\n"
-		"mov eax, 5\n"
-		"mov ebx, %1\n"
-		"mov ecx, 0\n"
-		"mov edx, 0\n"
-		"int 0x80\n"
-		"mov %0, eax\n"
+		"mov rax, 2\n"
+		"mov rdi, %1\n"
+		"mov rsi, 0\n"
+		"mov rdx, 0\n"
+		"syscall\n"
+		"mov %0, rax\n"
 		: "=r" (fp)
 		: "g" (path)
-		: "ebx", "esi", "edi"
-	);*/
-	return fp;
+		: "rcx", "r11"
+	);
+	return (int) fp;
 }
 
-int is_exec(char *line){
-	// e.g., "08048000-08049000 r-xp ..."
-	return line[20] == 'x';
+#define PERM_WRITE 1
+#define PERM_EXEC 2
+unsigned char get_permissions(char *line){
+	// e.g., "08048000-08049000 r-xp ..." or "08048000-08049000 rw-p ..."
+	unsigned char permissions = 0;
+	while( *line != ' ' ) line++;
+	line+=2; //Skip space and 'r' entry, go to 'w'
+	if( *line == 'w' ) permissions |= PERM_WRITE;
+	line++; //Go to 'x'
+	if( *line == 'x' ) permissions |= PERM_EXEC;
+	return permissions;
 }
 
-int is_write(char *line){
-	// e.g., "08048000-08049000 rw-p ..."
-	return line[19] == 'w';
-}
+#define is_write(p) (p & PERM_WRITE)
+#define is_exec(p) (p & PERM_EXEC)
 
 char *next_line(char *line){
 	/*
@@ -153,75 +179,95 @@ char *next_line(char *line){
 	return NULL;
 }
 
-unsigned int my_atoi(char *a){
+unsigned int my_atol(char *a){
 	/*
-	 * convert 8 byte hex string into its integer representation
+	 * convert unknown length (max 16) hex string into its integer representation
 	 * assumes input is from /proc/./maps
-	 * i.e., 'a' is a left-padded 8 byte lowercase hex string
-	 * e.g., "0804a000"
+	 * i.e., 'a' is a left-padded 16 byte lowercase hex string
+	 * e.g., "000000000804a000"
 	 */
-	unsigned int i = 0;
+	/*unsigned long i = 0;
 	int place, digit;
-	for (place = 7; place >= 0; place--, a++){
+	for (place = 15; place >= 0; place--, a++){
 		digit = (int)(*a) - 0x30;
 		if (digit > 9)
 			digit -= 0x27; // digit was [a-f]
-		i += digit << (place << 2);
+		i += (unsigned long) digit << (place << 2);
 	}
-	return i;
+	return i;*/
+	unsigned long l = 0;
+	unsigned char digit = *a;
+	while( (digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f') ){
+		digit -= '0';
+		if( digit > 9 ) digit -= 0x27; // digit was hex character
+		l <<= 4; // Shift by half a byte
+		l += digit;
+	}
+	return l;
 }
 
 void parse_range(char *line, unsigned int *start, unsigned int *end){
-	// e.g., "08048000-08049000 ..."
-	*start = my_atoi(line);
-	*end   = my_atoi(line+9);
+	/* 
+	 * e.g., "08048000-08049000 ..."
+	 * Unfortunately, for 64-bit applications, the address ranges do not have a
+	 * consistent length!  We must determine how many digits are in each number.
+	 */
+	char *line_start = line;
+	while( *line != '-' ) line++;
+	*start = my_atol(line_start);
+	*end   = my_atol(line+1);
 }
 
-void populate_mapping(unsigned int start, unsigned int end, unsigned int lookup_function, unsigned int *global_mapping){
-	unsigned int index = start >> 12;
-	int i;
-	for(i = 0; i < (end - start) / 0x1000; i++){
-		global_mapping[index + i] = lookup_function;
-	}
-#ifdef DEBUG
-	printf("Wrote %d entries\n", i);
-#endif
+void populate_mapping(unsigned int gm_index, unsigned int start, unsigned int end, unsigned int lookup_function, struct gm_entry *global_mapping){
+	global_mapping[gm_index].lookup_function = lookup_function;
+	global_mapping[gm_index].start = start;
+	global_mapping[gm_index].length = end - start;
 }
 
-void process_maps(char *buf, unsigned int *global_mapping){
+void process_maps(char *buf, struct gm_entry *global_mapping){
 	/*
 	 * Process buf which contains output of /proc/self/maps
 	 * populate global_mapping for each executable set of pages
 	 */
 	char *line = buf;
+	unsigned int gm_index = 1;//Reserve first entry for metadata
+	unsigned char permissions = 0;
 	//unsigned int global_start, global_end;
 	unsigned int old_text_start, old_text_end;
 	unsigned int new_text_start, new_text_end;
 
 	//Assume global mapping is first entry at 0x7000000 and that there is nothing before
+	//TODO: In 64-bit applications 0x7000000 will not come before the main executable,
+	//so we must follow a different approach! 
 	//Skip global mapping
 	line = next_line(line);
+	permissions = get_permissions(line);
 	do{ // process each block of maps
 		// process all segments from this object under very specific assumptions
-		if ( is_exec(line) ){
-			if( !is_write(line) ){
+		if ( is_exec(permissions) ){
+			if( !is_write(permissions) ){
 				parse_range(line, &old_text_start, &old_text_end);
 			}else{
 				parse_range(line, &new_text_start, &new_text_end);
-				populate_mapping(old_text_start, old_text_end, new_text_start, global_mapping);
+				populate_mapping(gm_index, old_text_start, old_text_end, new_text_start, global_mapping);
+				gm_index++;
 			}
 		}
 		line = next_line(line);
+		permissions = get_permissions(line);
 	} while(line != NULL);
 	// assume the very last executable and non-writable segment is that of the dynamic linker (ld-X.X.so)
 	// populate those ranges with the value 0x00000000 which will be compared against in the global lookup function
-	populate_mapping(old_text_start, old_text_end, 0x00000000, global_mapping);
+	//TODO: this will NOT be the dynamic linker!  It will be [vsyscall], so we must try something else!
+	populate_mapping(gm_index, old_text_start, old_text_end, 0x00000000, global_mapping);
+	gm_index++;
+	global_mapping[0].lookup_function = gm_index;// Use first entry for storing how many entries there are
 }
 
 #ifdef DEBUG
 int main(void){
 	void *mapping_base = (void *)0x09000000;
-	int fd = open("./map_shell", O_RDWR);
+	int fd = open("/dev/zero", O_RDWR);
 	void *global_mapping = mmap(mapping_base, 0x400000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 	if (global_mapping != mapping_base){
 		printf("failed to get requested base addr\n");
