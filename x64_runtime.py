@@ -151,46 +151,96 @@ class X64Runtime(object):
     #TODO: Support global lookup, executable + library rewriting
     #I have to modify it so it will assemble since we write out the global lookup
     #regardless of whether it's used, but it obviously won't work in this state...
-    global_lookup_template = '''hlt'''
+    #addr - global_mapping[index].start <= global_mapping[index].length
+    # rbx = length
+    # rcx = base/entry
+    # rdx = index
+    # r10 = entry
+    #struct gm_entry {
+    #	unsigned long lookup_function;
+    #	unsigned long start;
+    #	unsigned long length;
+    #};
+    #TODO: still need to handle code entering the loader region....
     '''
-    	cmp rax,[%s]
-    	jz sysinfo
+	cmp rax,[%s]		; If rax is sysinfo
+    	je sysinfo		; Go to rewrite return address
     glookup:
-    	cmp BYTE PTR [gs:%s],1
-    	jz failure
-    	mov BYTE PTR [gs:%s],1
-    	push rax
-    	shr rax,12
-    	shl rax,2
-    	mov rax,[%s+rax]
-    	mov DWORD PTR [rsp-32],rax
-    	cmp eax, 0xffffffff
-    	jz abort
-    	test rax,rax
-    	jz loader
-    	pop rax
-          call [rsp-36]
-    	mov BYTE PTR [gs:%s],0
-    	ret
-    loader:
-    	mov BYTE PTR [gs:%s],0
-    	pop rax
+	push rbx		; Save working registers
+	push rcx
+	push rdx
+	push r10
+	mov rbx, [%s]		; Load first value in first entry (lookup_function, serving as length)
+	mov rcx, %s		; Load address of first entry
+	xor rdx, rdx		; Clear rdx
+    searchloop:
+	cmp rbx, rdx		; Check if we are past last entry
+	je failure		; Did not find successful entry, so fail
+	add rcx, 24		; Set rcx to next entry
+	mov r10, [rcx+8]	; Load second item in entry (start)
+	neg r10			; Negate r10 so it can act like it is being subtracted
+	add r10, rax		; Get difference between lookup address and start
+	cmp r10, [rcx+16]	; Compare: address - start <= end - start (length)
+	jle success		; If so, we found the right entry.
+	inc rdx			; Add one to our index
+	jmp searchloop		; Loop for next entry
+    success:
+	call [rcx]		; Call the lookup, as specified by the first value (lookup_function) 
+	pop r10			; rax should now have the right value; restore the saved values and ret
+	pop rdx
+	pop rcx
+	pop rbx
+	ret
     sysinfo:
-    	push rax
-    	mov rax,[rsp+8]
-    	call glookup
-    	mov [rsp+8],rax
-    	pop rax
+    	push rax		; Save original rax
+    	mov rax,[rsp+16]	; Load the return address we want to overwrite
+    	call glookup		; Lookup the translated value
+    	mov [rsp+16],rax	; Overwrite with the translated value
+    	pop rax			; Restore original rax, returned unmodified so we call the loader
   	ret
     failure:
-    	hlt
-    abort:
-    	hlt
-    	mov rax,1
-    	int 0x80
+	hlt
     '''
-    return _asm(global_lookup_template)
-    #return _asm(global_lookup_template%(self.context.global_sysinfo,self.context.global_flag,self.context.global_flag,self.context.global_sysinfo+4,self.context.global_flag,self.context.global_flag))
+    global_lookup_template = '''
+	cmp rax,[%s]		
+    	je sysinfo
+    glookup:		
+	push rbx		
+	push rcx
+	push rdx
+	push r10
+	mov rcx, %s		
+	mov rbx, [rcx]		
+	xor rdx, rdx		
+    searchloop:
+	cmp rbx, rdx		
+	je failure		
+	add rcx, 24		
+	mov r10, [rcx+8]
+	neg r10	
+	add r10, rax	
+	cmp r10, [rcx+16]
+	jle success
+	inc rdx			
+	jmp searchloop		
+    success:
+	call [rcx]		 
+	pop r10			
+	pop rdx
+	pop rcx
+	pop rbx
+	ret
+    sysinfo:
+    	push rax		
+    	mov rax,[rsp+16]	
+    	call glookup		
+    	mov [rsp+16],rax	
+    	pop rax			
+  	ret
+    failure:
+	hlt
+    '''
+    return _asm(global_lookup_template%(self.context.global_sysinfo,self.context.global_sysinfo+8))
 
   def get_auxvec_code(self,entry):
     #Example assembly for searching the auxiliary vector
@@ -295,10 +345,9 @@ class X64Runtime(object):
     globalbytes = self.get_global_lookup_code()
     #globalbytes+='\0' #flag field
     globalbytes += self.get_popgm_code()
-    globalbytes += '\0\0\0\0' #sysinfo field
-    #Global mapping (0x3ffff8 0xff bytes) ending at kernel addresses.  Note it is NOT ending
-    #at 0xc0000000 because this boundary is only true for 32-bit kernels.  For 64-bit kernels,
-    #the application is able to use most of the entire 4GB address space, and the kernel only
-    #holds onto a tiny 8KB at the top of the address space.
-    globalbytes += '\xff'*((0xffffe000>>12)<<2) 
+    globalbytes += '\0\0\0\0\0\0\0\0' #sysinfo field
+    # Global mapping (0x6000 0x00 bytes).  This contains space for 1024 entries:
+    # 8 * 3 = 24 bytes per entry * 1024 entries = 0x6000 (24576) bytes.  If a binary
+    # has more than 1024 libraries, the program will most likely segfault.
+    globalbytes += '\x00'*0x6000
     return globalbytes
