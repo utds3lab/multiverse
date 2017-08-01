@@ -38,13 +38,28 @@ class X64Translator(Translator):
       #and we haven't been rewriting their destinations anyway; if they *are* used, they were already
       #broken before this 
       if 'rip' in ins.op_str and ins.mnemonic != 'ljmp':
-        if ins.mnemonic == 'ljmp':
-          print 'WARNING: unhandled %s %s @ %x'%(ins.mnemonic,ins.op_str,ins.address)
-        code = asm( '%s %s'%(ins.mnemonic, ins.op_str.replace( 'rip', hex(ins.address+len(ins.bytes)) ) ) )
+        code = b''
+        # For shared objects we need to still use rip, but calculate
+        # (rip - (newbase + after new instruction address)) + address after old instruction
+        # or (rip + ( (address after old instruction) - (newbase + after new instruction address) ) )
+        # The goal is to compute the value rip WOULD have had if the original binary were run, and replace
+        # rip with that value, derived from the NEW value in rip...
+        if self.context.write_so:
+          if mapping is not None:
+            oldaddr = ins.address + len(ins.bytes)
+            newaddr = mapping[ins.address] + len(ins.bytes) # Hoping that this instruction's size won't change...
+            code = asm( '%s %s' % (ins.mnemonic, ins.op_str.replace( 'rip', 'rip + %s' % hex( oldaddr - (self.context.newbase + newaddr) ) ) )
+          else:
+            #Placeholder until we know the new instruction location
+            code = asm( '%s %s' % (ins.mnemonic, ins.op_str.replace( 'rip', 'rip + %s' % hex(0x8f) ) )
+        else:
+          code = asm( '%s %s'%(ins.mnemonic, ins.op_str.replace( 'rip', hex(ins.address+len(ins.bytes)) ) ) )
         if inserted is not None:
           code = inserted + code
         return code
       else:
+        if ins.mnemonic == 'ljmp':
+          print 'WARNING: unhandled %s %s @ %x'%(ins.mnemonic,ins.op_str,ins.address)
         if inserted is not None:
           return inserted + str(ins.bytes)
       return None #No translation needs to be done
@@ -94,7 +109,7 @@ class X64Translator(Translator):
       else:
         lookup_target = self.remap_target(ins.address,mapping,self.context.lookup_function_offset,size)
       if ins.op_str == '':
-        code+=asm(template_after%(lookup_target,'',64)) #32 because of the value we popped
+        code+=asm(template_after%(lookup_target,'',64)) #64 because of the value we popped
       else: #For ret instructions that pop imm16 bytes from the stack, add that many bytes to esp
         pop_amt = int(ins.op_str,16) #We need to retrieve the right eax value from where we saved it
         code+=asm(template_after%(lookup_target,'add rsp,%d'%pop_amt,64+pop_amt))
@@ -242,12 +257,25 @@ class X64Translator(Translator):
     mov rax, [rsp-%s]
     %s [rsp-8]
     '''
-    #TODO: this will not work for shared objects because we need to add the base address that
-    #the library is loaded at to the pre-randomization offset we can obtain statically.
+    # TODO: Perhaps should move this after user instrumentation code
     #Replace references to rip with the original address after this instruction so that we
     #can look up the new address using the original
     if 'rip' in target:
-      target = target.replace( 'rip',hex(ins.address+len(ins.bytes)) )
+      # For shared objects we need to still use rip, but calculate
+      # (rip - (newbase + after new instruction address)) + address after old instruction
+      # or (rip + ( (address after old instruction) - (newbase + after new instruction address) ) )
+      # The goal is to compute the value rip WOULD have had if the original binary were run, and replace
+      # rip with that value, derived from the NEW value in rip...
+      if self.context.write_so:
+        if mapping is not None:
+          oldaddr = ins.address + len(ins.bytes)
+          newaddr = mapping[ins.address] + len(ins.bytes) # Hoping that this instruction's size won't change...
+          target = target.replace( 'rip', 'rip + %s' % hex( oldaddr - (self.context.newbase + newaddr) ) )
+        else:
+          #Placeholder until we know the new instruction location
+          target = target.replace( 'rip', 'rip + %s' % hex(0x8f) )
+      else: #If it is not an .so, then we can simply replace rip with the existing address
+        target = target.replace( 'rip', hex(ins.address+len(ins.bytes) ) )
     #TODO: This is somehow still the bottleneck, so this needs to be optimized
     code = b''
     if self.context.exec_only:

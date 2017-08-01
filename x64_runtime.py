@@ -33,36 +33,33 @@ class X64Runtime(object):
     '''
     #TODO: support lookup for binary/library combination
     lookup_template = '''
-  	push ebx
-  	mov ebx,eax
-  	call get_eip
-    get_eip:
-  	pop eax
-  	sub eax,%s
+  	push rbx
+  	mov rbx,rax
+  	lea rax, [rip-%s]
     	%s
   	jb outside
-  	cmp ebx,%s
+  	cmp rbx,%s
   	jae outside
-  	mov ebx,[eax+ebx*4+%s]
+  	mov ebx,[rax+rbx*4+%s]
   	cmp ebx, 0xffffffff
   	je failure
-  	add eax,ebx
-  	pop ebx
+  	add rax,rbx
+  	pop rbx
   	ret
     outside:
   	%s
-  	mov eax,ebx
-  	pop ebx
-  	mov DWORD PTR [esp-32],%s
-    	jmp [esp-32]
+  	mov rax,rbx
+  	pop rbx
+  	mov DWORD PTR [rsp-64],%s
+    	jmp [rsp-64]
     failure:
   	hlt
     '''
     exec_code = '''
-    	sub ebx,%s
+    	sub rbx,%s
     '''
     exec_restore = '''
-    	add ebx,%s
+    	add rbx,%s
     '''
     #Notice that we only move a DWORD from the mapping (into ebx) because the
     #mapping only stores 4-byte offsets.  Therefore, if a text section is >4GB,
@@ -93,27 +90,28 @@ class X64Runtime(object):
     #For an .so, it can be loaded at an arbitrary address, so we cannot depend on
     #the base address being in a fixed location.  Therefore, we instead compute 
     #the old text section's start address by using the new text section's offset
-    #from it.  The new text section's offset equals the lookup address and is
-    #stored in eax.  I use lea instead of add because it doesn't affect the flags,
-    #which are used to determine if ebx is outside the range.
-    #TODO: Support .so rewriting
+    #from it.  
+    # rax holds the address of the lookup function, which is at the start of the new
+    # section we are adding.
+    # rbx at the start holds the address we want to look up, and we want to compute
+    # how many bytes the address is from the start of the original text section.  So
+    # we add the newbase address to rbx to add the offset there is between the old and
+    # new text sections, and then subtract off the address of the lookup.
     so_code = '''
-    	sub eax,%s
-    	sub ebx,eax
-    	lea eax,[eax+%s]
+	add rbx, %s
+	sub rbx, rax
     '''
     so_restore = '''
-    	sub eax,%s
-    	add ebx,eax
-    	add eax,%s
+	add rbx, rax
+	sub rbx, %s
     '''
-    #retrieve eip 8 bytes after start of lookup function
+    #retrieve rip 11 bytes after start of lookup function (right after first lea instruction)
     if self.context.write_so:
-      return _asm(lookup_template%(lookup_off+8,so_code%(self.context.newbase,self.context.newbase),size,mapping_off,so_restore%(self.context.newbase,self.context.newbase),self.context.global_lookup))
+      return _asm(lookup_template%(lookup_off+11,so_code%(self.context.newbase,self.context.newbase),size,mapping_off,so_restore%(self.context.newbase,self.context.newbase),self.context.global_lookup))
     elif self.context.exec_only:
       return _asm( exec_only_lookup%(lookup_off+11,base,size,mapping_off,base) )
     else:
-      return _asm(lookup_template%(lookup_off+8,exec_code%base,size,mapping_off,exec_restore%base,self.context.global_lookup))
+      return _asm(lookup_template%(lookup_off+11,exec_code%base,size,mapping_off,exec_restore%base,self.context.global_lookup))
 
   def get_secondary_lookup_code(self,base,size,sec_lookup_off,mapping_off):
     '''This secondary lookup is only used when rewriting only the main executable.  It is a second, simpler
