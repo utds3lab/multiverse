@@ -107,7 +107,7 @@ class X64Runtime(object):
     '''
     #retrieve rip 11 bytes after start of lookup function (right after first lea instruction)
     if self.context.write_so:
-      return _asm(lookup_template%(lookup_off+11,so_code%(self.context.newbase,self.context.newbase),size,mapping_off,so_restore%(self.context.newbase,self.context.newbase),self.context.global_lookup))
+      return _asm(lookup_template%(lookup_off+11,so_code%(self.context.newbase),size,mapping_off,so_restore%(self.context.newbase),self.context.global_lookup))
     elif self.context.exec_only:
       return _asm( exec_only_lookup%(lookup_off+11,base,size,mapping_off,base) )
     else:

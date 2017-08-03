@@ -1,4 +1,4 @@
-from x64_assembler import asm
+from x64_assembler import asm,cache
 from capstone.x86 import X86_OP_REG,X86_OP_MEM,X86_OP_IMM
 import struct
 import re
@@ -10,10 +10,51 @@ class X64Translator(Translator):
     self.before_inst_callback = before_callback
     self.context = context
     self.memory_ref_string = re.compile(u'^qword ptr \[(?P<rip>0x[0-9a-z]+) \+ (?P<offset>0x[0-9a-z]+)\]$')
+    self.rip_with_offset = re.compile(u'\[rip(?: (?P<offset>[\+\-] [0x]?[0-9a-z]+))?\]') #Apparently the hex prefix is optional if the number is...unambiguous?
     #From Brian's Static_phase.py
     self.JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
       'jc','jnb','jae','jnc','jbe','jna','ja','jnbe','jl','jnge','jge',
       'jnl','jle','jng','jg','jnle','jp','jpe','jnp','jpo','jrcxz','jecxz']
+
+  def replace_rip(self,ins,mapping):
+        code = b''
+        # For shared objects we need to still use rip, but calculate
+        # (rip - (newbase + after new instruction address)) + address after old instruction
+        # or (rip + ( (address after old instruction) - (newbase + after new instruction address) ) )
+        # The goal is to compute the value rip WOULD have had if the original binary were run, and replace
+        # rip with that value, derived from the NEW value in rip...
+        if self.context.write_so: 
+          match = self.rip_with_offset.search(ins.op_str) #TODO: all this new stuff with the match and then the assembler optimization
+          if mapping is not None:
+            print 'rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
+            oldoffset = 0 #Assume at first that there is no offset from rip
+            if match.group('offset') != None:
+              #print 'match on offset: %s' % match.group('offset')
+              oldoffset = int(match.group('offset'), 16)
+            oldaddr = ins.address + len(ins.bytes)
+            newaddr = mapping[ins.address] + len(ins.bytes) # Hoping that this instruction's size won't change...
+            newoffset = (oldaddr - (self.context.newbase + newaddr)) + oldoffset
+            newopstr = ''
+            # Check whether it's negative so we can prefix with 0x even with negative numbers
+            if newoffset < 0:
+              newopstr = self.rip_with_offset.sub('[rip - 0x%x]' % -newoffset, ins.op_str)
+            else:
+              newopstr = self.rip_with_offset.sub('[rip + 0x%x]' % newoffset, ins.op_str)
+            print 'Old offset: 0x%x / Old address: 0x%x / New address: 0x%x / New base: 0x%x' % (oldoffset,oldaddr,newaddr,self.context.newbase)
+            print 'New instruction: %s %s' % (ins.mnemonic,newopstr)
+            return newopstr
+          else:
+            #Placeholder until we know the new instruction location
+            newopstr = self.rip_with_offset.sub('[rip]', ins.op_str)
+            #print 'rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
+            #print 'assembling %s %s' % (ins.mnemonic, newopstr)
+            #print 'instruction is %s' % str(ins.bytes[:-4] + (b'\0'*4)).encode('hex')
+            # Pre-populate cache with version of this instruction with NO offset; this means we never have to call assembler for this instruction.
+            # The assembler can just replace the offset, which we assume is the last 4 bytes in the instruction
+            cache['%s %s' % (ins.mnemonic, newopstr)] = ins.bytes[:-4] + (b'\0'*4)
+            return newopstr
+        else:
+          return ins.op_str.replace( 'rip', hex(ins.address+len(ins.bytes)) )
 
   def translate_one(self,ins,mapping):
     if ins.mnemonic in ['call','jmp']: #Unconditional jump
@@ -37,27 +78,24 @@ class X64Translator(Translator):
       #TODO: abandon rewriting ljmp instructions for now because the assembler doesn't like them
       #and we haven't been rewriting their destinations anyway; if they *are* used, they were already
       #broken before this 
-      if 'rip' in ins.op_str and ins.mnemonic != 'ljmp':
-        code = b''
-        # For shared objects we need to still use rip, but calculate
-        # (rip - (newbase + after new instruction address)) + address after old instruction
-        # or (rip + ( (address after old instruction) - (newbase + after new instruction address) ) )
-        # The goal is to compute the value rip WOULD have had if the original binary were run, and replace
-        # rip with that value, derived from the NEW value in rip...
-        if self.context.write_so:
-          if mapping is not None:
-            oldaddr = ins.address + len(ins.bytes)
-            newaddr = mapping[ins.address] + len(ins.bytes) # Hoping that this instruction's size won't change...
-            code = asm( '%s %s' % (ins.mnemonic, ins.op_str.replace( 'rip', 'rip + %s' % hex( oldaddr - (self.context.newbase + newaddr) ) ) )
-          else:
-            #Placeholder until we know the new instruction location
-            code = asm( '%s %s' % (ins.mnemonic, ins.op_str.replace( 'rip', 'rip + %s' % hex(0x8f) ) )
-        else:
-          code = asm( '%s %s'%(ins.mnemonic, ins.op_str.replace( 'rip', hex(ins.address+len(ins.bytes)) ) ) )
+      #TODO: I have also abandoned rewriting the following instructions because I can't get it to
+      #re-assemble with the current assembler:
+      #  fstp
+      #  fldenv
+      #  fld
+      #TODO: Since I am now doing a crazy optimization in which I use the original instruction's bytes
+      #and only change the last 4 bytes (the offset), I should actually be able to support these incompatible
+      #instructions by saving their original bytes in the assembler cache and therefore never actually sending
+      #the disassembled instruction to the assembler at all.
+      incompatible = ['ljmp', 'fstp', 'fldenv', 'fld', 'fbld']
+      if 'rip' in ins.op_str and (ins.mnemonic not in incompatible):
+        code = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) )
         if inserted is not None:
           code = inserted + code
         return code
       else:
+	if 'rip' in ins.op_str and (ins.mnemonic in incompatible):
+          print 'NOT rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
         if ins.mnemonic == 'ljmp':
           print 'WARNING: unhandled %s %s @ %x'%(ins.mnemonic,ins.op_str,ins.address)
         if inserted is not None:
@@ -187,7 +225,7 @@ class X64Translator(Translator):
         '''
         so_call = '''
         push rbx
-        lea rbx,[rip-%s]
+        lea rbx,[rip - %s]
         xchg rbx,[rsp]
         '''
         if self.context.write_so:
@@ -242,7 +280,7 @@ class X64Translator(Translator):
     push rbx
     '''
     so_call_after = '''
-    lea rbx,[rip-%s]
+    lea rbx,[rip - %s]
     xchg rbx,[rsp]
     '''
     template_after = '''
@@ -261,6 +299,8 @@ class X64Translator(Translator):
     #Replace references to rip with the original address after this instruction so that we
     #can look up the new address using the original
     if 'rip' in target:
+      target = self.replace_rip(ins,mapping)
+      '''
       # For shared objects we need to still use rip, but calculate
       # (rip - (newbase + after new instruction address)) + address after old instruction
       # or (rip + ( (address after old instruction) - (newbase + after new instruction address) ) )
@@ -271,11 +311,12 @@ class X64Translator(Translator):
           oldaddr = ins.address + len(ins.bytes)
           newaddr = mapping[ins.address] + len(ins.bytes) # Hoping that this instruction's size won't change...
           target = target.replace( 'rip', 'rip + %s' % hex( oldaddr - (self.context.newbase + newaddr) ) )
-        else:
+        # If the mapping is None, then simply leave the offset as-is.  We will correct it in the second pass.
+        #else:
           #Placeholder until we know the new instruction location
-          target = target.replace( 'rip', 'rip + %s' % hex(0x8f) )
+          #target = target.replace( 'rip', 'rip + %s' % hex(0x8f) )
       else: #If it is not an .so, then we can simply replace rip with the existing address
-        target = target.replace( 'rip', hex(ins.address+len(ins.bytes) ) )
+        target = target.replace( 'rip', hex(ins.address+len(ins.bytes) ) )'''
     #TODO: This is somehow still the bottleneck, so this needs to be optimized
     code = b''
     if self.context.exec_only:
