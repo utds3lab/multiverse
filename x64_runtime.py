@@ -3,6 +3,7 @@ from x64_assembler import _asm,asm
 class X64Runtime(object):
   def __init__(self,context):
     self.context = context
+    self.context.global_lookup = 0x200000 # Set global lookup offset for 64-bit
 
   def get_lookup_code(self,base,size,lookup_off,mapping_off):
     #Example assembly for lookup function
@@ -50,7 +51,7 @@ class X64Runtime(object):
   	%s
   	mov rax,rbx
   	pop rbx
-  	mov DWORD PTR [rsp-64],%s
+  	mov QWORD PTR [rsp-64],%s
     	jmp [rsp-64]
     failure:
   	hlt
@@ -168,8 +169,8 @@ class X64Runtime(object):
 	push rcx
 	push rdx
 	push r10
-	mov rbx, [%s]		; Load first value in first entry (lookup_function, serving as length)
 	mov rcx, %s		; Load address of first entry
+	mov rbx, [rcx]		; Load first value in first entry (lookup_function, serving as length)
 	xor rdx, rdx		; Clear rdx
     searchloop:
 	cmp rbx, rdx		; Check if we are past last entry
@@ -321,9 +322,8 @@ class X64Runtime(object):
     push rbp
     push rsi
     push rdi
-    push %s
-    call $+0x10
-    add rsp,8
+    mov rdi, %s
+    call $+0x0d
     pop rdi
     pop rsi
     pop rbp
@@ -333,7 +333,7 @@ class X64Runtime(object):
     pop rax
     ret
     '''
-    popgmbytes = asm(call_popgm%(self.context.global_sysinfo+4))
+    popgmbytes = asm(call_popgm%(self.context.global_sysinfo+8))
     with open('x64_%s' % self.context.popgm) as f:
       popgmbytes+=f.read()
     return popgmbytes

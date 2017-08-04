@@ -242,8 +242,8 @@ void process_maps(char *buf, struct gm_entry *global_mapping){
 	unsigned int gm_index = 1;//Reserve first entry for metadata
 	unsigned char permissions = 0;
 	//unsigned int global_start, global_end;
-	unsigned long old_text_start, old_text_end;
-	unsigned long new_text_start, new_text_end;
+	unsigned long old_text_start, old_text_end = 0;
+	unsigned long new_text_start, new_text_end = 0;
 
 	//Assume global mapping is first entry at 0x200000 and that there is nothing before
 	//Skip global mapping (put at 0x200000 in 64-bit binaries, as opposed to 0x7000000 for x86)

@@ -26,7 +26,7 @@ class X64Translator(Translator):
         if self.context.write_so: 
           match = self.rip_with_offset.search(ins.op_str) #TODO: all this new stuff with the match and then the assembler optimization
           if mapping is not None:
-            print 'rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
+            #print 'rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
             oldoffset = 0 #Assume at first that there is no offset from rip
             if match.group('offset') != None:
               #print 'match on offset: %s' % match.group('offset')
@@ -35,13 +35,17 @@ class X64Translator(Translator):
             newaddr = mapping[ins.address] + len(ins.bytes) # Hoping that this instruction's size won't change...
             newoffset = (oldaddr - (self.context.newbase + newaddr)) + oldoffset
             newopstr = ''
+            # If the new offset cannot be encoded in 4 bytes, replace it with a placeholder
+            if newoffset <= -0x80000000 or newoffset >= 0x7fffffff:
+              print 'WARNING: unencodable offset for instruction @ 0x%x: %x' % (ins.address,newoffset)
+              newoffset = -0x7faddead
             # Check whether it's negative so we can prefix with 0x even with negative numbers
             if newoffset < 0:
               newopstr = self.rip_with_offset.sub('[rip - 0x%x]' % -newoffset, ins.op_str)
             else:
               newopstr = self.rip_with_offset.sub('[rip + 0x%x]' % newoffset, ins.op_str)
-            print 'Old offset: 0x%x / Old address: 0x%x / New address: 0x%x / New base: 0x%x' % (oldoffset,oldaddr,newaddr,self.context.newbase)
-            print 'New instruction: %s %s' % (ins.mnemonic,newopstr)
+            #print 'Old offset: 0x%x / Old address: 0x%x / New address: 0x%x / New base: 0x%x' % (oldoffset,oldaddr,newaddr,self.context.newbase)
+            #print 'New instruction: %s %s' % (ins.mnemonic,newopstr)
             return newopstr
           else:
             #Placeholder until we know the new instruction location
@@ -88,16 +92,16 @@ class X64Translator(Translator):
       #instructions by saving their original bytes in the assembler cache and therefore never actually sending
       #the disassembled instruction to the assembler at all.
       incompatible = ['ljmp', 'fstp', 'fldenv', 'fld', 'fbld']
-      if 'rip' in ins.op_str and (ins.mnemonic not in incompatible):
+      if 'rip' in ins.op_str:# and (ins.mnemonic not in incompatible):
         code = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) )
         if inserted is not None:
           code = inserted + code
         return code
       else:
-	if 'rip' in ins.op_str and (ins.mnemonic in incompatible):
+	'''if 'rip' in ins.op_str and (ins.mnemonic in incompatible):
           print 'NOT rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
         if ins.mnemonic == 'ljmp':
-          print 'WARNING: unhandled %s %s @ %x'%(ins.mnemonic,ins.op_str,ins.address)
+          print 'WARNING: unhandled %s %s @ %x'%(ins.mnemonic,ins.op_str,ins.address)'''
         if inserted is not None:
           return inserted + str(ins.bytes)
       return None #No translation needs to be done

@@ -235,6 +235,7 @@ def renable(fname,arch):
           print 'global lookup: 0x%x'%context.global_lookup
         print 'local lookup: 0x%x'%context.lookup_function_offset
         print 'secondary local lookup: 0x%x'%context.secondary_lookup_function_offset
+        print 'mapping offset: 0x%x'%mapping[context.mapping_offset]
         with open('%s-r-map.json'%fname,'wb') as f:
           json.dump(mapping,f)
         if not context.write_so:
