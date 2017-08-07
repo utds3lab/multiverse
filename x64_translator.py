@@ -93,6 +93,11 @@ class X64Translator(Translator):
       #the disassembled instruction to the assembler at all.
       incompatible = ['ljmp', 'fstp', 'fldenv', 'fld', 'fbld']
       if 'rip' in ins.op_str:# and (ins.mnemonic not in incompatible):
+        if not len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) ) == len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) ):
+          print '%s %s @ 0x%x LENGTH FAIL1: %s vs %s' % (ins.mnemonic, ins.op_str, ins.address, str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ))).encode('hex'), str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,None)) )).encode('hex') )
+          newone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) )
+          oldone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) )
+          print '%d vs %d, %s' % (newone,oldone,newone == oldone)
         code = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) )
         if inserted is not None:
           code = inserted + code
@@ -303,6 +308,11 @@ class X64Translator(Translator):
     #Replace references to rip with the original address after this instruction so that we
     #can look up the new address using the original
     if 'rip' in target:
+      if not len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) ) == len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) ):
+        print '%s %s @ 0x%x LENGTH FAIL2: %s vs %s' % (ins.mnemonic, ins.op_str, ins.address, str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ))).encode('hex'), str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,None)) )).encode('hex') )
+        newone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) )
+        oldone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) )
+        print '%d vs %d, %s' % (newone,oldone,newone == oldone)
       target = self.replace_rip(ins,mapping)
       '''
       # For shared objects we need to still use rip, but calculate
