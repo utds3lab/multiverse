@@ -30,6 +30,29 @@ class X86Translator(Translator):
       if inserted is not None:
         return inserted + str(ins.bytes)
       return None #No translation needs to be done
+  
+  # Write copy of return address into shadow stack
+  def shadow_call(self):
+    #template = 'mov [esp + 0x%x], %s'
+    #return asm( template % (self.shadow_stack_offset, addr_loc) )
+    template = '''
+	pop [esp + %d]
+	sub esp, 4
+    '''
+    return asm( template % (self.context.shadow_stack_offset-4) )
+
+  # Overwrite previous return address with address in shadow stack
+  def shadow_ret(self):
+    #template = '''
+    #	cmp [esp + 0x%x], %s
+    #	jnz 0x0
+    #'''
+    #return asm( template % (self.shadow_stack_offset, addr_loc) )
+    template = '''
+	add esp, 4
+	push [esp + %d]
+    '''
+    return asm( template % (self.context.shadow_stack_offset-4) )
 
   def translate_ret(self,ins,mapping):
     '''
@@ -56,12 +79,13 @@ class X86Translator(Translator):
     inserted = self.before_inst_callback(ins)
     if inserted is not None:
       code += inserted
+    code += self.shadow_ret() # Insert code for overwriting return value on stack with shadow stack entry
     if self.context.no_pic and ins.address != self.context.get_pc_thunk + 3:
       #Perform a normal return UNLESS this is the ret for the thunk.
       #Currently its position is hardcoded as three bytes after the thunk entry.
-      code = asm( 'ret %s'%ins.op_str )
+      code += asm( 'ret %s'%ins.op_str )
     else:
-      code = asm(template_before)
+      code += asm(template_before)
       size = len(code)
       lookup_target = b''
       if self.context.exec_only:
@@ -166,6 +190,7 @@ class X86Translator(Translator):
           code += asm(exec_call%(ins.address+len(ins.bytes)))
       else:
         self.context.stat['dirjmp']+=1
+      code += self.shadow_call() # Insert code for pushing on shadow stack
       newtarget = self.remap_target(ins.address,mapping,target,len(code))
       #print "(pre)new length: %s"%len(callback_code)
       #print "target: %s"%hex(target)
@@ -251,6 +276,7 @@ class X86Translator(Translator):
     else:
       self.context.stat['indjmp']+=1
       code += asm(template_before%(target,''))
+    code += self.shadow_call() # Insert code for pushing on shadow stack
     size = len(code)
     lookup_target = self.remap_target(ins.address,mapping,self.context.lookup_function_offset,size)
     #Always transform an unconditional control transfer to a jmp, but

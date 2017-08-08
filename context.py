@@ -35,3 +35,4 @@ class Context(object):
     self.callbacks = {'__libc_start_main':[0,3,4]}
     self.before_inst_callback = (lambda x: None)
     self.alloc_globals = 0
+    self.shadow_stack_offset = -0x1000000
