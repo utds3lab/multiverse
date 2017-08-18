@@ -76,7 +76,7 @@ def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry):
     newtext_section = CustomSection(newbytes, sh_addr = newbase)
     newglobal_section = CustomSection(newglobal, sh_addr = newglobalbase)
     newtls_section = CustomSection(newtls, sh_addr = newglobalbase-0x10000) #TODO: make this address flexible
-    newshadow_section = CustomSection('\0'*0x40000, sh_addr = 0xfefdd000, sh_flags=SHF_WRITE | SHF_ALLOC ) #Manually calculated offset from fixed stack location
+    newshadow_section = CustomSection('\0'*0x80000, sh_addr = 0xfef7e000, sh_flags=SHF_WRITE | SHF_ALLOC ) #Manually calculated offset from fixed stack location
     if newtext_section is None or newglobal_section is None:
       raise Exception
     newtext_segment = CustomSegment(PT_LOAD)
