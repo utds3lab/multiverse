@@ -307,6 +307,6 @@ For that, use this as a library instead.''')
     context.exec_only = True
   if args.nopic:
     context.no_pic = True
-  #renable(args.filename,args.arch)
-  cProfile.run('renable(args.filename,args.arch)')
+  renable(args.filename,args.arch)
+  #cProfile.run('renable(args.filename,args.arch)')
 

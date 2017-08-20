@@ -55,7 +55,13 @@ class X64Translator(Translator):
             #print 'instruction is %s' % str(ins.bytes[:-4] + (b'\0'*4)).encode('hex')
             # Pre-populate cache with version of this instruction with NO offset; this means we never have to call assembler for this instruction.
             # The assembler can just replace the offset, which we assume is the last 4 bytes in the instruction
-            cache['%s %s' % (ins.mnemonic, newopstr)] = ins.bytes[:-4] + (b'\0'*4)
+            if ('%s %s' % (ins.mnemonic, newopstr)) not in cache:
+              # Only add to the cache ONCE.  If you keep adding to the cache, some instructions have prefixes that ALTER the base instruction length
+              # for that instruction with no offset.  Therefore, if another instruction comes along with the same mnemonic and opstring, but containing
+              # a different number of garbage prefixes before it, then the length of these instructions fluctuates, throwing off all the careful alignment
+              # required for mapping these instructions.  Due to these garbage prefixes, some instructions may increase by a few bytes and semantics could
+              # potentially, theoretically be altered, but this could be solved with a better assembler or disassembler.
+              cache['%s %s' % (ins.mnemonic, newopstr)] = ins.bytes[:-4] + (b'\0'*4)
             return newopstr
         else:
           return ins.op_str.replace( 'rip', hex(ins.address+len(ins.bytes)) )
@@ -93,11 +99,13 @@ class X64Translator(Translator):
       #the disassembled instruction to the assembler at all.
       incompatible = ['ljmp', 'fstp', 'fldenv', 'fld', 'fbld']
       if 'rip' in ins.op_str:# and (ins.mnemonic not in incompatible):
-        if not len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) ) == len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) ):
-          print '%s %s @ 0x%x LENGTH FAIL1: %s vs %s' % (ins.mnemonic, ins.op_str, ins.address, str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ))).encode('hex'), str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,None)) )).encode('hex') )
+        asm1 = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) )
+        asm2 = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) )
+        if len(asm1) != len(asm2):
+          print '%s %s @ 0x%x LENGTH FAIL1: %s vs %s' % (ins.mnemonic, ins.op_str, ins.address, str(asm1).encode('hex'), str(asm2).encode('hex') )
           newone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) )
           oldone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) )
-          print '%d vs %d, %s' % (newone,oldone,newone == oldone)
+          print '%d vs %d, %d vs %d' % (newone,oldone,len(asm1),len(asm2))
         code = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) )
         if inserted is not None:
           code = inserted + code
@@ -308,7 +316,7 @@ class X64Translator(Translator):
     #Replace references to rip with the original address after this instruction so that we
     #can look up the new address using the original
     if 'rip' in target:
-      if not len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) ) == len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) ):
+      if len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) ) != len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) ):
         print '%s %s @ 0x%x LENGTH FAIL2: %s vs %s' % (ins.mnemonic, ins.op_str, ins.address, str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ))).encode('hex'), str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,None)) )).encode('hex') )
         newone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) )
         oldone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) )
