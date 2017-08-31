@@ -19,7 +19,7 @@ class X64Translator(Translator):
       'jc','jnb','jae','jnc','jbe','jna','ja','jnbe','jl','jnge','jge',
       'jnl','jle','jng','jg','jnle','jp','jpe','jnp','jpo','jrcxz','jecxz']
 
-  def replace_rip(self,ins,mapping):
+  def replace_rip(self,ins,mapping,newlen):
         code = b''
         # For shared objects we need to still use rip, but calculate
         # (rip - (newbase + after new instruction address)) + address after old instruction
@@ -35,7 +35,13 @@ class X64Translator(Translator):
               #print 'match on offset: %s' % match.group('offset')
               oldoffset = int(match.group('offset'), 16)
             oldaddr = ins.address + len(ins.bytes)
-            newaddr = mapping[ins.address] + len(ins.bytes) # Hoping that this instruction's size won't change...
+            # For completely rewritten instructions, the new length will indeed change, because the original instruction
+            # may be rewritten into multiple instructions, with potentially many instructions inserted before the one
+            # that references rip.  Because an instruction referring to rip has it pointing after that instruction, we need
+            # the length of all code preceding it and then the length of the new instruction referencing rip to know the 
+            # *real* new address.  Then we can determine the offset between them and add the old offset, thereby giving our new offset.
+            # All instructions may potentially have code inserted before them, so we will always need this new length.
+            newaddr = mapping[ins.address] + newlen
             newoffset = (oldaddr - (self.context.newbase + newaddr)) + oldoffset
             newopstr = ''
             # If the new offset cannot be encoded in 4 bytes, replace it with a placeholder
@@ -77,6 +83,9 @@ class X64Translator(Translator):
                 # Populate version in cache with the instruction with a displacement of all 1s.  Leave the immediate value (if there is one) intact.
                 cache[newins] = ins.bytes[:disp_offset] + (b'\0'*4) + ins.bytes[disp_offset+disp_size:]
               else:
+                # TODO: Changing the instruction to use a larger displacement WILL change the instruction length, and thus WILL result in an incorrect new
+                # displacement as we calculate it now.  This needs to be fixed to use the correct new displacement as it would be calculated after knowing
+                # the new instruction length.
                 print 'WARNING: instruction %s has too small displacement: %d'%(newins,disp_size)
               '''for op in ins.operands:
                 # If there is an immediate operand in the instruction, then the immediate is encoded after the displacement, and so we must skip the
@@ -124,16 +133,19 @@ class X64Translator(Translator):
       #the disassembled instruction to the assembler at all.
       incompatible = ['ljmp', 'fstp', 'fldenv', 'fld', 'fbld']
       if 'rip' in ins.op_str:# and (ins.mnemonic not in incompatible):
-        asm1 = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) )
+        '''asm1 = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) )
         asm2 = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) )
         if len(asm1) != len(asm2):
           print '%s %s @ 0x%x LENGTH FAIL1: %s vs %s' % (ins.mnemonic, ins.op_str, ins.address, str(asm1).encode('hex'), str(asm2).encode('hex') )
           newone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) )
           oldone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) )
-          print '%d vs %d, %d vs %d' % (newone,oldone,len(asm1),len(asm2))
-        code = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) )
+          print '%d vs %d, %d vs %d' % (newone,oldone,len(asm1),len(asm2))'''
+        code = b''
         if inserted is not None:
+          code = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping,len(inserted) + len(ins.bytes) ) ) )
           code = inserted + code
+        else:
+          code = asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping,len(ins.bytes) ) ) )
         return code
       else:
 	'''if 'rip' in ins.op_str and (ins.mnemonic in incompatible):
@@ -337,33 +349,6 @@ class X64Translator(Translator):
     mov rax, [rsp-%s]
     %s [rsp-8]
     '''
-    # TODO: Perhaps should move this after user instrumentation code
-    #Replace references to rip with the original address after this instruction so that we
-    #can look up the new address using the original
-    if 'rip' in target:
-      if len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) ) != len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) ):
-        print '%s %s @ 0x%x LENGTH FAIL2: %s vs %s' % (ins.mnemonic, ins.op_str, ins.address, str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ))).encode('hex'), str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,None)) )).encode('hex') )
-        newone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) )
-        oldone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) )
-        print '%d vs %d, %s' % (newone,oldone,newone == oldone)
-      target = self.replace_rip(ins,mapping)
-      '''
-      # For shared objects we need to still use rip, but calculate
-      # (rip - (newbase + after new instruction address)) + address after old instruction
-      # or (rip + ( (address after old instruction) - (newbase + after new instruction address) ) )
-      # The goal is to compute the value rip WOULD have had if the original binary were run, and replace
-      # rip with that value, derived from the NEW value in rip...
-      if self.context.write_so:
-        if mapping is not None:
-          oldaddr = ins.address + len(ins.bytes)
-          newaddr = mapping[ins.address] + len(ins.bytes) # Hoping that this instruction's size won't change...
-          target = target.replace( 'rip', 'rip + %s' % hex( oldaddr - (self.context.newbase + newaddr) ) )
-        # If the mapping is None, then simply leave the offset as-is.  We will correct it in the second pass.
-        #else:
-          #Placeholder until we know the new instruction location
-          #target = target.replace( 'rip', 'rip + %s' % hex(0x8f) )
-      else: #If it is not an .so, then we can simply replace rip with the existing address
-        target = target.replace( 'rip', hex(ins.address+len(ins.bytes) ) )'''
     #TODO: This is somehow still the bottleneck, so this needs to be optimized
     code = b''
     if self.context.exec_only:
@@ -373,6 +358,16 @@ class X64Translator(Translator):
     inserted = self.before_inst_callback(ins)
     if inserted is not None:
       code += inserted
+    #Replace references to rip with the original address after this instruction so that we
+    #can look up the new address using the original
+    if 'rip' in target:
+      '''if len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) ) != len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) ):
+        print '%s %s @ 0x%x LENGTH FAIL2: %s vs %s' % (ins.mnemonic, ins.op_str, ins.address, str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ))).encode('hex'), str(asm('%s %s' % (ins.mnemonic, self.replace_rip(ins,None)) )).encode('hex') )
+        newone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,mapping) ) ) )
+        oldone = len( asm( '%s %s' % (ins.mnemonic, self.replace_rip(ins,None) ) ) )
+        print '%d vs %d, %s' % (newone,oldone,newone == oldone)'''
+      # The new "instruction length" is the length of all preceding code, plus the instructions up through the one referencing rip
+      target = self.replace_rip(ins,mapping,len(code) + len(asm('mov [rsp-64],rax\nmov rax,[rip]')) )
     if self.context.no_pic:
       if ins.mnemonic == 'call':
         self.context.stat['indcall']+=1
