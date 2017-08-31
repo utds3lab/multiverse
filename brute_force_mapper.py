@@ -67,7 +67,6 @@ class BruteForceMapper(Mapper):
         size = m[k]
         mapping[k] = offset
         offset+=size #Add the size of this instruction to the total offset
-    self.metamaplist = maplist
     #Now that the mapping is complete, we know the length of it
     self.context.mapping_offset = len(self.bytes)+self.base #Where we pretend the mapping was in the old code
     if not self.context.write_so:
@@ -129,10 +128,6 @@ class BruteForceMapper(Mapper):
     for m in maplist:
       for k in sorted(m.keys()): #For each original address to code, in order of original address
         newbytes+=m[k]
-        for otherm in self.metamaplist:
-          if k in otherm:
-            if otherm[k] != len(m[k]): #ALERT!  ALERT!  LENGTH MISMATCH!
-              print 'ALERT!  MISMATCH: 0x%s: %s vs %s' % ( hex(k),hex(otherm[k]),hex(len(m[k])) )
     if not self.context.write_so:
       newbytes+=self.runtime.get_auxvec_code(mapping[self.entry])
     print 'mapping is being placed at offset: 0x%x' % len(newbytes)

@@ -1,4 +1,4 @@
-from x64_assembler import asm,cache
+from x64_assembler import asm,cache,metacache
 from capstone.x86 import X86_OP_REG,X86_OP_MEM,X86_OP_IMM
 import struct
 import re
@@ -11,6 +11,9 @@ class X64Translator(Translator):
     self.context = context
     self.memory_ref_string = re.compile(u'^qword ptr \[(?P<rip>0x[0-9a-z]+) \+ (?P<offset>0x[0-9a-z]+)\]$')
     self.rip_with_offset = re.compile(u'\[rip(?: (?P<offset>[\+\-] [0x]?[0-9a-z]+))?\]') #Apparently the hex prefix is optional if the number is...unambiguous?
+    # Pre-populate this instruction in the metacache so we can avoid rewriting variations of it
+    metacache['        lea rbx,[rip]'] = 3
+    metacache['    lea rbx,[rip]'] = 3
     #From Brian's Static_phase.py
     self.JCC = ['jo','jno','js','jns','je','jz','jne','jnz','jb','jnae',
       'jc','jnb','jae','jnc','jbe','jna','ja','jnbe','jl','jnge','jge',
@@ -53,15 +56,37 @@ class X64Translator(Translator):
             #print 'rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
             #print 'assembling %s %s' % (ins.mnemonic, newopstr)
             #print 'instruction is %s' % str(ins.bytes[:-4] + (b'\0'*4)).encode('hex')
+            newins = '%s %s' % (ins.mnemonic, newopstr)
             # Pre-populate cache with version of this instruction with NO offset; this means we never have to call assembler for this instruction.
             # The assembler can just replace the offset, which we assume is the last 4 bytes in the instruction
-            if ('%s %s' % (ins.mnemonic, newopstr)) not in cache:
+            if newins not in cache:
               # Only add to the cache ONCE.  If you keep adding to the cache, some instructions have prefixes that ALTER the base instruction length
               # for that instruction with no offset.  Therefore, if another instruction comes along with the same mnemonic and opstring, but containing
               # a different number of garbage prefixes before it, then the length of these instructions fluctuates, throwing off all the careful alignment
               # required for mapping these instructions.  Due to these garbage prefixes, some instructions may increase by a few bytes and semantics could
               # potentially, theoretically be altered, but this could be solved with a better assembler or disassembler.
-              cache['%s %s' % (ins.mnemonic, newopstr)] = ins.bytes[:-4] + (b'\0'*4)
+              # ---
+              # The displacement size and offset are not easily obtainable in the current version of capstone, so this requires a customized version that
+              # provides access to this data.  With this, we can determine exactly the position of the displacement and replace it
+              disp_size = ins._detail.arch.x86.encoding.disp_size
+              disp_offset = ins._detail.arch.x86.encoding.disp_offset
+              # We will only automatically replace 4-byte displacements, because smaller ones will very likely not fit the new displacement, and 4-byte
+              # displacements are much more common.  This means we will need to re-assemble any instructions that do not have a 4-byte displacement, however.
+              if disp_size == 4:
+                metacache[newins] = disp_offset # Save displacement offset for assembler
+                # Populate version in cache with the instruction with a displacement of all 1s.  Leave the immediate value (if there is one) intact.
+                cache[newins] = ins.bytes[:disp_offset] + (b'\0'*4) + ins.bytes[disp_offset+disp_size:]
+              else:
+                print 'WARNING: instruction %s has too small displacement: %d'%(newins,disp_size)
+              '''for op in ins.operands:
+                # If there is an immediate operand in the instruction, then the immediate is encoded after the displacement, and so we must skip the
+                # immediate, leaving it intact and only modifying the displacement.
+                if op.type == X86_OP_IMM:
+                  metacache[newins] = op.size
+              # If the instruction does not have an immediate, add nothing to the instruction
+              immediate = ins.bytes[-metacache[newins]:] if newins in metacache else b''
+              # Populate version in cache with the instruction with a displacement of zero.  Leave the immediate value (if there is one) intact.
+              cache[newins] = ins.bytes[:-(4+len(immediate))] + (b'\0'*4) + immediate'''
             return newopstr
         else:
           return ins.op_str.replace( 'rip', hex(ins.address+len(ins.bytes)) )
@@ -242,7 +267,7 @@ class X64Translator(Translator):
         '''
         so_call = '''
         push rbx
-        lea rbx,[rip - %s]
+        lea rbx,[rip - 0x%x]
         xchg rbx,[rsp]
         '''
         if self.context.write_so:
@@ -297,7 +322,7 @@ class X64Translator(Translator):
     push rbx
     '''
     so_call_after = '''
-    lea rbx,[rip - %s]
+    lea rbx,[rip - 0x%x]
     xchg rbx,[rsp]
     '''
     template_after = '''

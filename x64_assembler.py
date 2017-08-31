@@ -4,6 +4,17 @@ import re
 import struct
 
 cache = {}
+# Metacache stores data about an assembled instruction.
+# Specifically, right now it only holds the offset of the
+# displacement value (if the instruction encodes a 4-byte displacement).
+# This is only used for efficient modification of 
+# already-assembled instructions containing a reference to rip.
+# This value allows us to change the offset from rip regardless of
+# the instruction.
+# even if
+# there is an immediate value (which appears at the end of an
+# encoded instruction's bytes).
+metacache = {}
 pat = re.compile('\$\+[-]?0x[0-9a-f]+')
 pat2 = re.compile('[ ]*push [0-9]+[ ]*')
 pat3 = re.compile('[ ]*mov eax, (d)?word ptr \[0x[0-9a-f]+\][ ]*')
@@ -120,14 +131,20 @@ def asm(text):
     elif rip_with_offset.search(line):
       #print 'WARNING: using assumption to efficiently assemble "%s"' % line
       m = rip_with_offset.search(line)
-      # Assemble it with no offset, which may have already been added to the cache
-      newcode = _asm( rip_with_offset.sub('[rip]', line) )
-      if m.group('offset'):
-        #print 'WARNING: using assumption to efficiently assemble "%s"' % line
-        # Replace last 4 bytes with little-endian encoded offset retrieved from the original assembly
-        code += newcode[:-4] + struct.pack( '<i', int(m.group('offset'),16) )
+      newstr = rip_with_offset.sub('[rip]', line)
+      if newstr in metacache:
+        # Assemble it with no offset, which must have have already been added to the cache
+        newcode = _asm( newstr )
+        if m.group('offset'):
+          #immediate = newcode[-metacache[newstr]:] if newstr in metacache else b''
+          #print 'WARNING: using assumption to efficiently assemble "%s"' % line
+          # Replace 4 bytes of displacement with little-endian encoded offset retrieved from the original assembly
+          #code += newcode[:-(4+len(immediate))] + struct.pack( '<i', int(m.group('offset'),16) ) + immediate
+          code += newcode[:metacache[newstr]] + struct.pack( '<i', int(m.group('offset'),16) ) + newcode[metacache[newstr]+4:]
+        else:
+          code += newcode
       else:
-        code += newcode
+        code+=_asm(line) # if we don't have it properly cached, just assemble the original
     else:
       code+=_asm(line)
   return code
