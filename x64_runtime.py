@@ -162,8 +162,9 @@ class X64Runtime(object):
     #};
     #TODO: still need to handle code entering the loader region....
     '''
-	cmp rax,[%s]		; If rax is sysinfo
-    	je sysinfo		; Go to rewrite return address
+	; Get rid of sysinfo comparison because we instead are going to be comparing based on entire address ranges
+	;cmp rax,[%s]		; If rax is sysinfo
+    	;je sysinfo		; Go to rewrite return address
     glookup:
 	push rbx		; Save working registers
 	push rcx
@@ -184,25 +185,30 @@ class X64Runtime(object):
 	inc rdx			; Add one to our index
 	jmp searchloop		; Loop for next entry
     success:
-	call [rcx]		; Call the lookup, as specified by the first value (lookup_function) 
+	mov rcx,[rcx]		; Load lookup address into rcx so we can compare it to 0
+	test rcx,rcx		; If lookup address is zero it means this region is not rewritten!
+	jz external		; Jump to external so we can rewrite return address on the stack (assume only calls into external regions)
+	call rcx		; Call the lookup, as specified by the first value in global mapping entry (lookup_function) 	
 	pop r10			; rax should now have the right value; restore the saved values and ret
 	pop rdx
 	pop rcx
 	pop rbx
 	ret
-    sysinfo:
+    external:
     	push rax		; Save original rax
-    	mov rax,[rsp+16]	; Load the return address we want to overwrite
+    	mov rax,[rsp+48]	; Load the return address we want to overwrite (the 4 registers we pushed in glookup + address of instruction calling the local lookup + rax)
     	call glookup		; Lookup the translated value
-    	mov [rsp+16],rax	; Overwrite with the translated value
-    	pop rax			; Restore original rax, returned unmodified so we call the loader
+    	mov [rsp+48],rax	; Overwrite with the translated value
+    	pop rax			; Restore original rax, returned unmodified so we call unmodified external code
+	pop r10			; Restore all saved registers and return
+	pop rdx
+	pop rcx
+	pop rbx
   	ret
     failure:
 	hlt
     '''
     global_lookup_template = '''
-	cmp rax,[%s]		
-    	je sysinfo
     glookup:		
 	push rbx		
 	push rcx
@@ -223,23 +229,30 @@ class X64Runtime(object):
 	inc rdx			
 	jmp searchloop		
     success:
-	call [rcx]		 
+	mov rcx,[rcx]
+	test rcx,rcx
+	jz external
+	call rcx		 
 	pop r10			
 	pop rdx
 	pop rcx
 	pop rbx
 	ret
-    sysinfo:
+    external:
     	push rax		
-    	mov rax,[rsp+16]	
+    	mov rax,[rsp+48]	
     	call glookup		
-    	mov [rsp+16],rax	
-    	pop rax			
+    	mov [rsp+48],rax	
+    	pop rax	
+	pop r10			
+	pop rdx
+	pop rcx
+	pop rbx		
   	ret
     failure:
 	hlt
     '''
-    return _asm(global_lookup_template%(self.context.global_sysinfo,self.context.global_sysinfo+8))
+    return _asm(global_lookup_template%(self.context.global_sysinfo+8))
 
   def get_auxvec_code(self,entry):
     #Example assembly for searching the auxiliary vector

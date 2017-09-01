@@ -173,6 +173,50 @@ unsigned char get_permissions(char *line){
 #define is_write(p) (p & PERM_WRITE)
 #define is_exec(p) (p & PERM_EXEC)
 
+#define NUM_EXTERNALS 3
+
+/*
+ Check whether the memory range is not rewritten by our system:
+ This includes [vsyscall], [vdso], and the dynamic loader
+*/
+unsigned char is_external(char *line){
+	volatile char externals[][11] = {
+		"/ld-",
+		"[vdso]",
+		"[vsyscall]"
+	};
+	unsigned int offset,i;
+	char *lineoff;
+	while( *line != ' ' ) line++; // Skip memory ranges
+        line += 21; // Skip permissions and some other fields
+        while( *line != ' ' ) line++; // Skip last field
+	while( *line == ' ' ) line++; // Skip whitespace
+        if( *line != '\n'){ // If line has text at the end
+		// Could have done a string matching state machine here, but
+                // it would be harder to add extra strings to later.
+		for( i = 0; i < NUM_EXTERNALS; i++ ){
+			offset = 0;
+			lineoff = line-1;
+			while( *lineoff != '\n' && *lineoff != '\0' ){
+				// This is not perfect string matching, and will not work in general cases
+				// because we do not backtrack.  It should work with the strings we are searching
+				// for now, plus it's relatively simple to do it this way, so I'm leaving it like
+				// this for the time being.
+				lineoff++; //Increment lineoff here so that we compare to the previous char for the loop
+				if( externals[i][offset] == '\0' ){
+					return 1;// Matched
+				}
+				if( *lineoff == externals[i][offset] ){
+					offset++; // If we are matching, move forward one in external
+				}else{
+					offset = 0; // If they failed to match, start over at the beginning
+				}
+			}
+		}
+	}
+	return 0; //Not an external
+}
+
 char *next_line(char *line){
 	/*
 	 * finds the next line to process
@@ -257,6 +301,15 @@ void process_maps(char *buf, struct gm_entry *global_mapping){
 #ifdef DEBUG
 				printf("Parsed range for r-xp: %lx-%lx\n", old_text_start, old_text_end);
 #endif
+				if( is_external(line) ){
+#ifdef DEBUG
+					printf("Region is external: %lx-%lx\n", old_text_start, old_text_end);
+#endif
+					// Populate external regions with 0x00000000, which will be checked for in the global lookup.
+					// It will then rewrite the return address on the stack and return the original address.
+					populate_mapping(gm_index, old_text_start, old_text_end, 0x00000000, global_mapping);
+					gm_index++;
+				}
 			}else{
 				parse_range(line, &new_text_start, &new_text_end);
 #ifdef DEBUG
@@ -268,11 +321,6 @@ void process_maps(char *buf, struct gm_entry *global_mapping){
 		}
 		line = next_line(line);
 	} while(line != NULL);
-	// assume the very last executable and non-writable segment is that of the dynamic linker (ld-X.X.so)
-	// populate those ranges with the value 0x00000000 which will be compared against in the global lookup function
-	//TODO: this will NOT be the dynamic linker!  It will be [vsyscall], so we must try something else!
-	populate_mapping(gm_index, old_text_start, old_text_end, 0x00000000, global_mapping);
-	gm_index++;
 	global_mapping[0].lookup_function = gm_index;// Use first entry for storing how many entries there are
 }
 
