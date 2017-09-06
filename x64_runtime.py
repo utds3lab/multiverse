@@ -51,8 +51,8 @@ class X64Runtime(object):
   	%s
   	mov rax,rbx
   	pop rbx
-  	mov QWORD PTR [rsp-64],%s
-    	jmp [rsp-64]
+  	mov QWORD PTR [rsp-8],%s
+    	jmp [rsp-8]
     failure:
   	hlt
     '''
@@ -166,8 +166,8 @@ class X64Runtime(object):
 	;cmp rax,[%s]		; If rax is sysinfo
     	;je sysinfo		; Go to rewrite return address
     glookup:
-	push rbx		; Save working registers
-	push rcx
+	push rcx		; Save working registers
+	push rbx		
 	push rdx
 	push r10
 	mov rcx, %s		; Load address of first entry
@@ -188,30 +188,30 @@ class X64Runtime(object):
 	mov rcx,[rcx]		; Load lookup address into rcx so we can compare it to 0
 	test rcx,rcx		; If lookup address is zero it means this region is not rewritten!
 	jz external		; Jump to external so we can rewrite return address on the stack (assume only calls into external regions)
+	pop r10			; Restore the saved values first to grow the stack as little as possible
+	pop rdx
+	pop rbx
 	call rcx		; Call the lookup, as specified by the first value in global mapping entry (lookup_function) 	
-	pop r10			; rax should now have the right value; restore the saved values and ret
-	pop rdx
-	pop rcx
-	pop rbx
-	ret
+	pop rcx			; Restore rcx since we were using it to save the lookup function address 
+	ret			; rax should now have the right value, so return
     external:
-    	push rax		; Save original rax
-    	mov rax,[rsp+48]	; Load the return address we want to overwrite (the 4 registers we pushed in glookup + address of instruction calling the local lookup + rax)
+	pop r10			; Restore all saved registers, as the subsequent call to glookup will save them again.
+	pop rdx			; Restoring the saved registers before the recursive call means the stack will not grow as much,
+	pop rbx			; avoiding overwriting the value of rax saved outside the stack before the local lookup call without
+	pop rcx			; having to increase the distance that rax is saved outside the stack as much as we would otherwise.
+    	mov [rsp-64],rax	; Save original rax (not with push so we don't increase the stack pointer any more)
+    	mov rax,[rsp+8]		; Load the return address we want to overwrite (address of instruction calling the local lookup)
     	call glookup		; Lookup the translated value
-    	mov [rsp+48],rax	; Overwrite with the translated value
-    	pop rax			; Restore original rax, returned unmodified so we call unmodified external code
-	pop r10			; Restore all saved registers and return
-	pop rdx
-	pop rcx
-	pop rbx
+    	mov [rsp+8],rax		; Overwrite with the translated value
+    	mov rax,[rsp-64]	; Restore original rax, returned unmodified so we call unmodified external code
   	ret
     failure:
 	hlt
     '''
     global_lookup_template = '''
-    glookup:		
+    glookup:	
+	push rcx	
 	push rbx		
-	push rcx
 	push rdx
 	push r10
 	mov rcx, %s		
@@ -232,22 +232,22 @@ class X64Runtime(object):
 	mov rcx,[rcx]
 	test rcx,rcx
 	jz external
-	call rcx		 
 	pop r10			
 	pop rdx
-	pop rcx
 	pop rbx
+	call rcx		 
+	pop rcx
 	ret
     external:
-    	push rax		
-    	mov rax,[rsp+48]	
-    	call glookup		
-    	mov [rsp+48],rax	
-    	pop rax	
 	pop r10			
 	pop rdx
-	pop rcx
-	pop rbx		
+	pop rbx
+	pop rcx	
+    	mov [rsp-64],rax		
+    	mov rax,[rsp+8]	
+    	call glookup		
+    	mov [rsp+8],rax	
+    	mov rax,[rsp-64]		
   	ret
     failure:
 	hlt
