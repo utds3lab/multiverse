@@ -21,84 +21,80 @@ class X64Translator(Translator):
 
   def replace_rip(self,ins,mapping,newlen):
         code = b''
-        # For shared objects we need to still use rip, but calculate
+        # In the main binary, we technically do not need to use rip;
+        # since we know the location our main binary code will be at,
+        # we can replace it with an absolute address.  HOWEVER, if we want
+        # to support position-independent main binaries, and if we don't
+        # want to have to re-assemble any instructions that our assembler
+        # cannot currently handle correctly (such as ljmp), then it is better
+        # to simply replace rip in the same way as in shared objects.
+        #
+        # For shared objects we *need* to use rip, but calculate
         # (rip - (newbase + after new instruction address)) + address after old instruction
         # or (rip + ( (address after old instruction) - (newbase + after new instruction address) ) )
         # The goal is to compute the value rip WOULD have had if the original binary were run, and replace
         # rip with that value, derived from the NEW value in rip...
-        if self.context.write_so: 
-          match = self.rip_with_offset.search(ins.op_str) #TODO: all this new stuff with the match and then the assembler optimization
-          if mapping is not None:
-            #print 'rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
-            oldoffset = 0 #Assume at first that there is no offset from rip
-            if match.group('offset') != None:
-              #print 'match on offset: %s' % match.group('offset')
-              oldoffset = int(match.group('offset'), 16)
-            oldaddr = ins.address + len(ins.bytes)
-            # For completely rewritten instructions, the new length will indeed change, because the original instruction
-            # may be rewritten into multiple instructions, with potentially many instructions inserted before the one
-            # that references rip.  Because an instruction referring to rip has it pointing after that instruction, we need
-            # the length of all code preceding it and then the length of the new instruction referencing rip to know the 
-            # *real* new address.  Then we can determine the offset between them and add the old offset, thereby giving our new offset.
-            # All instructions may potentially have code inserted before them, so we will always need this new length.
-            newaddr = mapping[ins.address] + newlen
-            newoffset = (oldaddr - (self.context.newbase + newaddr)) + oldoffset
-            newopstr = ''
-            # If the new offset cannot be encoded in 4 bytes, replace it with a placeholder
-            if newoffset <= -0x80000000 or newoffset >= 0x7fffffff:
-              print 'WARNING: unencodable offset for instruction @ 0x%x: %x' % (ins.address,newoffset)
-              newoffset = -0x7faddead
-            # Check whether it's negative so we can prefix with 0x even with negative numbers
-            if newoffset < 0:
-              newopstr = self.rip_with_offset.sub('[rip - 0x%x]' % -newoffset, ins.op_str)
-            else:
-              newopstr = self.rip_with_offset.sub('[rip + 0x%x]' % newoffset, ins.op_str)
-            #print 'Old offset: 0x%x / Old address: 0x%x / New address: 0x%x / New base: 0x%x' % (oldoffset,oldaddr,newaddr,self.context.newbase)
-            #print 'New instruction: %s %s' % (ins.mnemonic,newopstr)
-            return newopstr
+        match = self.rip_with_offset.search(ins.op_str) #TODO: all this new stuff with the match and then the assembler optimization
+        if mapping is not None:
+          #print 'rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
+          oldoffset = 0 #Assume at first that there is no offset from rip
+          if match.group('offset') != None:
+            #print 'match on offset: %s' % match.group('offset')
+            oldoffset = int(match.group('offset'), 16)
+          oldaddr = ins.address + len(ins.bytes)
+          # For completely rewritten instructions, the new length will indeed change, because the original instruction
+          # may be rewritten into multiple instructions, with potentially many instructions inserted before the one
+          # that references rip.  Because an instruction referring to rip has it pointing after that instruction, we need
+          # the length of all code preceding it and then the length of the new instruction referencing rip to know the 
+          # *real* new address.  Then we can determine the offset between them and add the old offset, thereby giving our new offset.
+          # All instructions may potentially have code inserted before them, so we will always need this new length.
+          newaddr = mapping[ins.address] + newlen
+          newoffset = (oldaddr - (self.context.newbase + newaddr)) + oldoffset
+          newopstr = ''
+          # If the new offset cannot be encoded in 4 bytes, replace it with a placeholder
+          if newoffset <= -0x80000000 or newoffset >= 0x7fffffff:
+            print 'WARNING: unencodable offset for instruction @ 0x%x: %x' % (ins.address,newoffset)
+            newoffset = -0x7faddead
+          # Check whether it's negative so we can prefix with 0x even with negative numbers
+          if newoffset < 0:
+            newopstr = self.rip_with_offset.sub('[rip - 0x%x]' % -newoffset, ins.op_str)
           else:
-            #Placeholder until we know the new instruction location
-            newopstr = self.rip_with_offset.sub('[rip]', ins.op_str)
-            #print 'rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
-            #print 'assembling %s %s' % (ins.mnemonic, newopstr)
-            #print 'instruction is %s' % str(ins.bytes[:-4] + (b'\0'*4)).encode('hex')
-            newins = '%s %s' % (ins.mnemonic, newopstr)
-            # Pre-populate cache with version of this instruction with NO offset; this means we never have to call assembler for this instruction.
-            # The assembler can just replace the offset, which we assume is the last 4 bytes in the instruction
-            if newins not in cache:
-              # Only add to the cache ONCE.  If you keep adding to the cache, some instructions have prefixes that ALTER the base instruction length
-              # for that instruction with no offset.  Therefore, if another instruction comes along with the same mnemonic and opstring, but containing
-              # a different number of garbage prefixes before it, then the length of these instructions fluctuates, throwing off all the careful alignment
-              # required for mapping these instructions.  Due to these garbage prefixes, some instructions may increase by a few bytes and semantics could
-              # potentially, theoretically be altered, but this could be solved with a better assembler or disassembler.
-              # ---
-              # The displacement size and offset are not easily obtainable in the current version of capstone, so this requires a customized version that
-              # provides access to this data.  With this, we can determine exactly the position of the displacement and replace it
-              disp_size = ins._detail.arch.x86.encoding.disp_size
-              disp_offset = ins._detail.arch.x86.encoding.disp_offset
-              # We will only automatically replace 4-byte displacements, because smaller ones will very likely not fit the new displacement, and 4-byte
-              # displacements are much more common.  This means we will need to re-assemble any instructions that do not have a 4-byte displacement, however.
-              if disp_size == 4:
-                metacache[newins] = disp_offset # Save displacement offset for assembler
-                # Populate version in cache with the instruction with a displacement of all 1s.  Leave the immediate value (if there is one) intact.
-                cache[newins] = ins.bytes[:disp_offset] + (b'\0'*4) + ins.bytes[disp_offset+disp_size:]
-              else:
-                # TODO: Changing the instruction to use a larger displacement WILL change the instruction length, and thus WILL result in an incorrect new
-                # displacement as we calculate it now.  This needs to be fixed to use the correct new displacement as it would be calculated after knowing
-                # the new instruction length.
-                print 'WARNING: instruction %s has too small displacement: %d'%(newins,disp_size)
-              '''for op in ins.operands:
-                # If there is an immediate operand in the instruction, then the immediate is encoded after the displacement, and so we must skip the
-                # immediate, leaving it intact and only modifying the displacement.
-                if op.type == X86_OP_IMM:
-                  metacache[newins] = op.size
-              # If the instruction does not have an immediate, add nothing to the instruction
-              immediate = ins.bytes[-metacache[newins]:] if newins in metacache else b''
-              # Populate version in cache with the instruction with a displacement of zero.  Leave the immediate value (if there is one) intact.
-              cache[newins] = ins.bytes[:-(4+len(immediate))] + (b'\0'*4) + immediate'''
-            return newopstr
+            newopstr = self.rip_with_offset.sub('[rip + 0x%x]' % newoffset, ins.op_str)
+          #print 'Old offset: 0x%x / Old address: 0x%x / New address: 0x%x / New base: 0x%x' % (oldoffset,oldaddr,newaddr,self.context.newbase)
+          #print 'New instruction: %s %s' % (ins.mnemonic,newopstr)
+          return newopstr
         else:
-          return ins.op_str.replace( 'rip', hex(ins.address+len(ins.bytes)) )
+          #Placeholder until we know the new instruction location
+          newopstr = self.rip_with_offset.sub('[rip]', ins.op_str)
+          #print 'rewriting %s instruction with rip: %s %s' % (ins.mnemonic,ins.mnemonic,ins.op_str) 
+          #print 'assembling %s %s' % (ins.mnemonic, newopstr)
+          #print 'instruction is %s' % str(ins.bytes[:-4] + (b'\0'*4)).encode('hex')
+          newins = '%s %s' % (ins.mnemonic, newopstr)
+          # Pre-populate cache with version of this instruction with NO offset; this means we never have to call assembler for this instruction.
+          # The assembler can just replace the offset, which we assume is the last 4 bytes in the instruction
+          if newins not in cache:
+            # Only add to the cache ONCE.  If you keep adding to the cache, some instructions have prefixes that ALTER the base instruction length
+            # for that instruction with no offset.  Therefore, if another instruction comes along with the same mnemonic and opstring, but containing
+            # a different number of garbage prefixes before it, then the length of these instructions fluctuates, throwing off all the careful alignment
+            # required for mapping these instructions.  Due to these garbage prefixes, some instructions may increase by a few bytes and semantics could
+            # potentially, theoretically be altered, but this could be solved with a better assembler or disassembler.
+            # ---
+            # The displacement size and offset are not easily obtainable in the current version of capstone, so this requires a customized version that
+            # provides access to this data.  With this, we can determine exactly the position of the displacement and replace it
+            disp_size = ins._detail.arch.x86.encoding.disp_size
+            disp_offset = ins._detail.arch.x86.encoding.disp_offset
+            # We will only automatically replace 4-byte displacements, because smaller ones will very likely not fit the new displacement, and 4-byte
+            # displacements are much more common.  This means we will need to re-assemble any instructions that do not have a 4-byte displacement, however.
+            if disp_size == 4:
+              metacache[newins] = disp_offset # Save displacement offset for assembler
+              # Populate version in cache with the instruction with a displacement of all 0s.  Leave the immediate value (if there is one) intact.
+              cache[newins] = ins.bytes[:disp_offset] + (b'\0'*4) + ins.bytes[disp_offset+disp_size:]
+            else:
+              # TODO: Changing the instruction to use a larger displacement WILL change the instruction length, and thus WILL result in an incorrect new
+              # displacement as we calculate it now.  This needs to be fixed to use the correct new displacement as it would be calculated after knowing
+              # the new instruction length.
+              print 'WARNING: instruction %s has small displacement: %d'%(newins,disp_size)
+          return newopstr
 
   def translate_one(self,ins,mapping):
     if ins.mnemonic in ['call','jmp']: #Unconditional jump
