@@ -68,12 +68,33 @@ def rewrite_noglobal(fname,nname,newcode,newbase,entry):
     elf.set_entry_point(entry)
     elf.write_new_elf(nname)
 
-def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry):
-  elf = ELFManip(fname,num_adtl_segments=4)
+def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry,text_section_offs,text_section_size):
+  num_new_segments = 4
+  elf = ELFManip(fname,num_adtl_segments=num_new_segments)
+  if text_section_size >= elf.ehdr['e_phentsize']*(elf.ehdr['e_phnum']+num_new_segments+1):
+    num_new_segments += 1 # Add an extra segment for the overwritten contents of the text section
+    # Use global_flag in tls section to determine if we added a new section
+    # TODO: if we change what we add to the tls section in renabler, this will overwrite it!
+    add_tls_section(fname,b'\1')
   newtls = get_tls_content(elf) #Right now there will ALWAYS be a new TLS section
   with open(newcode) as f:
     newbytes = f.read()
-    elf.relocate_phdrs()
+    # IF the text section is large enough to hold the phdrs (true for a nontrivial program)
+    if text_section_size >= elf.ehdr['e_phentsize']*(elf.ehdr['e_phnum']+num_new_segments):
+      # Place the phdrs at the start of the (original) text section, overwriting the contents
+      print 'placing phdrs in .text section, overwriting contents until runtime'
+      #print 'BUT for now, still do it the original way so we can do a quick test...'
+      #elf.relocate_phdrs()
+      elf.relocate_phdrs(custom_offset=text_section_offs,new_size=elf.ehdr['e_phentsize']*(elf.ehdr['e_phnum']+num_new_segments))
+      # Assume that the phdrs won't be larger than a page, and just copy that entire first page of the text section.
+      duptext_section = CustomSection(elf.elf.get_section_by_name('.text').data()[:4096], sh_addr = newglobalbase-0x20000) #TODO: make this address flexible
+      duptext_segment = CustomSegment(PT_LOAD)
+      duptext_segment = elf.add_segment(duptext_segment)
+      elf.add_section(duptext_section, duptext_segment)
+    else:
+      # Use the previous heuristics to relocate the phdrs and hope for the best
+      print '.text section too small to hold phdrs; using other heuristics to relocate phdrs'
+      elf.relocate_phdrs()
     newtext_section = CustomSection(newbytes, sh_addr = newbase)
     newglobal_section = CustomSection(newglobal, sh_addr = newglobalbase)
     newtls_section = CustomSection(newtls, sh_addr = newglobalbase-0x10000) #TODO: make this address flexible

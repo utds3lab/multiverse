@@ -239,7 +239,7 @@ def renable(fname,arch):
         with open('%s-r-map.json'%fname,'wb') as f:
           json.dump(mapping,f)
         if not context.write_so:
-          bin_write.rewrite(fname,fname+'-r','newbytes',context.newbase,mapper.runtime.get_global_mapping_bytes(),context.global_lookup,context.newbase+context.new_entry_off)
+          bin_write.rewrite(fname,fname+'-r','newbytes',context.newbase,mapper.runtime.get_global_mapping_bytes(),context.global_lookup,context.newbase+context.new_entry_off,offs,size)
         else:
           context.new_entry_off = mapping[entry]
           bin_write.rewrite_noglobal(fname,fname+'-r','newbytes',context.newbase,context.newbase+context.new_entry_off)
