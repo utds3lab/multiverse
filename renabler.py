@@ -122,6 +122,10 @@ def renable(fname,arch):
         offs = section.header.sh_offset
         size = section.header.sh_size
         addr = section.header.sh_addr
+        context.oldbase = addr
+        # If .text section is large enough to hold all new segments, we can move the phdrs there
+        if size >= elffile.header['e_phentsize']*(elffile.header['e_phnum']+context.num_new_segments+1):
+          context.move_phdrs_to_text = True
       if section.name == '.plt':
         context.plt['addr'] = section.header['sh_addr']
         context.plt['size'] = section.header['sh_size']
@@ -239,7 +243,7 @@ def renable(fname,arch):
         with open('%s-r-map.json'%fname,'wb') as f:
           json.dump(mapping,f)
         if not context.write_so:
-          bin_write.rewrite(fname,fname+'-r','newbytes',context.newbase,mapper.runtime.get_global_mapping_bytes(),context.global_lookup,context.newbase+context.new_entry_off,offs,size)
+          bin_write.rewrite(fname,fname+'-r','newbytes',context.newbase,mapper.runtime.get_global_mapping_bytes(),context.global_lookup,context.newbase+context.new_entry_off,offs,size,context.num_new_segments)
         else:
           context.new_entry_off = mapping[entry]
           bin_write.rewrite_noglobal(fname,fname+'-r','newbytes',context.newbase,context.newbase+context.new_entry_off)

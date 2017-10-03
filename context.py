@@ -3,6 +3,7 @@ class Context(object):
 
   def __init__(self):
     self.plt = {}
+    self.oldbase = 0x0
     self.newbase = 0x09000000
     self.lookup_function_offset = 0x8f
     self.secondary_lookup_function_offset = 0x8f #ONLY used when rewriting ONLY main executable
@@ -17,6 +18,8 @@ class Context(object):
     self.exec_only = False
     self.no_pic = False
     self.get_pc_thunk = None
+    self.num_new_segments = 4 # 4 new segments in the main binary
+    self.move_phdrs_to_text = False # Do not relocate phdrs to text section by default
     self.stat = {}
     self.stat['indcall'] = 0
     self.stat['indjmp'] = 0

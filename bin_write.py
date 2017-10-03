@@ -68,14 +68,11 @@ def rewrite_noglobal(fname,nname,newcode,newbase,entry):
     elf.set_entry_point(entry)
     elf.write_new_elf(nname)
 
-def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry,text_section_offs,text_section_size):
-  num_new_segments = 4
+def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry,text_section_offs,text_section_size,num_new_segments):
+  #TODO: change rewrite to take the context instead, and just retrieve the data it needs from that.
   elf = ELFManip(fname,num_adtl_segments=num_new_segments)
   if text_section_size >= elf.ehdr['e_phentsize']*(elf.ehdr['e_phnum']+num_new_segments+1):
     num_new_segments += 1 # Add an extra segment for the overwritten contents of the text section
-    # Use global_flag in tls section to determine if we added a new section
-    # TODO: if we change what we add to the tls section in renabler, this will overwrite it!
-    add_tls_section(fname,b'\1')
   newtls = get_tls_content(elf) #Right now there will ALWAYS be a new TLS section
   with open(newcode) as f:
     newbytes = f.read()

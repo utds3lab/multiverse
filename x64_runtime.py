@@ -256,6 +256,15 @@ class X64Runtime(object):
 
   def get_auxvec_code(self,entry):
     #Example assembly for searching the auxiliary vector
+    #TODO: this commented assembly needs to be updated, as it's still 32-bit code
+    #TODO: using the global_flag for signaling whether we need to restore the first page of .text
+    # works, but this will break x86 rewriting unless we modify the auxvec code there as well...
+    # a possible alternative is using sysinfo instead, but that may require minor changes, since
+    # there's no way to change its value directly right now.
+    #TODO: I'm no longer using global_flag, as it was a foolish idea anyway.  This is something
+    # that can be determined offline, so there's no need for an online check.  Right now the restoration
+    # code still exists even if it isn't needed, so I should change the code to simply omit it
+    # entirely when not needed.
     '''
   	mov [esp-4],esi		;I think there's no need to save these, but in case somehow the
   	mov [esp-8],ecx		;linker leaves something of interest for _start, let's save them
@@ -284,8 +293,42 @@ class X64Runtime(object):
   	mov ecx,[esp-8]
     	push global_mapping	;Push address of global mapping for popgm
     	call popgm
+	test BYTE PTR [gs:%s],1	;Check if the flag is set; if so we need to restore the start of .text
+	jz skiprestoretext
+	call restoretext
+    skiprestoretext:
     	add esp,4		;Pop address of global mapping
   	jmp realstart
+    restoretext:
+	mov BYTE PTR [gs:%s],0	;Restore flag to original state
+	push rax		;Save registers required for syscall
+	push rdi
+	push rsi
+	push rdx
+	mov rax, 10		;sys_mprotect
+	mov rdi, text_base	;Location of start of text section (rounded down to nearest page size)
+	mov rsi, 4096		;One page
+	mov rdx, 7		;rwx
+	syscall			;Make page writable
+	mov rax, 0	;Use rax as an index (starting at an offset that skips plt entries and other things preceding .text)
+	mov rsi, saved_text_addr;Use rsi as a base address (address of the saved first page) (global lookup address - offset)
+	mov rdi, text_addr	;Load actual text section location
+    looprestore:
+	mov rdx, [rsi+rax]	;Load 8 bytes from saved .text page
+	mov [rdi+rax], rdx	;Restore this data
+	add rax,8		;Move index forward 8 bytes
+	cmp rax,page_end	;If less than 4096-text_offset, continue looping
+	jb looprestore 
+	mov rax, 10		;sys_mprotect
+	mov rdi, text_base	;Location of start of text section (rounded down to nearest page size)
+	mov rsi, 4096		;One page
+	mov rdx, 5		;r-x
+	syscall			;Remove writable permission
+	pop rdx			;Restore registers required for syscall
+	pop rsi
+	pop rdi
+	pop rax
+	ret
     '''
     auxvec_template = '''
   	mov [rsp-8],rsi
@@ -316,10 +359,42 @@ class X64Runtime(object):
     	push %s
     	call [rsp]
     	add rsp,8
+	%s
+	call restoretext
+    skiprestoretext:
     	mov DWORD PTR [rsp-16], %s
   	jmp [rsp-16]
+    restoretext:
+	push rax		
+	push rdi
+	push rsi
+	push rdx
+	mov rax, 10		
+	mov rdi, %s	
+	mov rsi, 4096		
+	mov rdx, 7		
+	syscall			
+	mov rax, 0		
+	mov rsi, %s
+	mov rdi, %s	
+    looprestore:
+	mov rdx, [rsi+rax]	
+	mov [rdi+rax], rdx	
+	add rax,8		
+	cmp rax,%s		
+	jb looprestore 
+	mov rax, 10		
+	mov rdi, %s	
+	mov rsi, 4096		
+	mov rdx, 5		
+	syscall			
+	pop rdx		
+	pop rsi
+	pop rdi
+	pop rax
+	ret
     '''
-    return _asm(auxvec_template%(self.context.global_sysinfo,self.context.global_lookup+self.context.popgm_offset,self.context.newbase+entry))
+    return _asm(auxvec_template%(self.context.global_sysinfo,self.context.global_lookup+self.context.popgm_offset,'nop' if self.context.move_phdrs_to_text else 'jmp skiprestoretext',self.context.newbase+entry, (self.context.oldbase/0x1000)*0x1000, self.context.global_lookup - 0x20000, self.context.oldbase, 0x1000-(self.context.oldbase%0x1000), (self.context.oldbase/0x1000)*0x1000))
 
   def get_popgm_code(self):
     #pushad and popad do NOT exist in x64,
