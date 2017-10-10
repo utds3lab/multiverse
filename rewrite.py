@@ -3,7 +3,7 @@ import sys,os
 import subprocess
 import shutil
 
-import renabler
+from renabler import Rewriter
 
 def extract_libraries(fname):
   result = subprocess.check_output('ldd %s'%fname, shell=True)
@@ -28,12 +28,12 @@ def extract_dynamic_libraries(fname, libpath):
   return paths
 
 def rewrite_libraries(libpath,paths,arch):
-  renabler.context.write_so = True
+  rewriter = Rewriter(True,False,False)
   for path in paths:
     (base,fname) = os.path.split(path)
     libname = os.path.join(libpath,fname)
     shutil.copy(path,libname)
-    renabler.renable(libname,arch)
+    rewriter.rewrite(libname,arch)
     os.remove(libname)
     shutil.move(libname+'-r',libname)
     shutil.move(libname+'-r-map.json',libname+'-map.json')
@@ -66,12 +66,13 @@ if __name__ == '__main__':
     print 'Getting dynamic libraries'
     paths.extend(extract_dynamic_libraries(fname,libpath))
     print 'Rewriting libraries'
+    print paths
     rewrite_libraries(libpath,paths,arch)
     
     if not dynamic_only:
       print 'Rewriting main binary'
-      renabler.context.write_so = False
-      renabler.renable(fpath,arch)
+      rewriter = Rewriter(False,False,False)
+      rewriter.rewrite(fpath,arch)
     
     print 'Writing runnable .sh'
     with open(fpath+'-r.sh', 'w') as f:

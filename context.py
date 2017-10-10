@@ -17,7 +17,7 @@ class Context(object):
     self.write_so = False
     self.exec_only = False
     self.no_pic = False
-    self.get_pc_thunk = None
+    self.get_pc_thunk = 0 #Set to zero by default so that if it isn't in the binary, no instruction will match
     self.num_new_segments = 4 # 4 new segments in the main binary
     self.move_phdrs_to_text = False # Do not relocate phdrs to text section by default
     self.stat = {}
@@ -36,3 +36,5 @@ class Context(object):
     #List of library functions that have callback args; each function in the dict has a list of
     #the arguments passed to it that are a callback (measured as the index of which argument it is)
     self.callbacks = {'__libc_start_main':[0,3,4]}
+    self.before_inst_callback = (lambda x: None)
+    self.alloc_globals = 0

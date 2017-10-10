@@ -21,7 +21,7 @@ class BruteForceMapper(Mapper):
       #working again, and make instrumentation feel more organized
       from x86_translator import X86Translator
       from x86_runtime import X86Runtime
-      self.translator = X86Translator((lambda x: None),self.context)
+      self.translator = X86Translator(context.before_inst_callback,self.context)
       self.runtime = X86Runtime(self.context)
       global assembler
       import x86_assembler as assembler
