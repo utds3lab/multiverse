@@ -1,8 +1,6 @@
 import struct
 from mapper import Mapper
 from brute_force_disassembler import BruteForceDisassembler
-from x86_translator import X86Translator
-from x86_runtime import X86Runtime
 
 class BruteForceMapper(Mapper):
   ''' This mapper disassembled from every offset and includes a
@@ -21,12 +19,19 @@ class BruteForceMapper(Mapper):
       #NOTE: We are currently NOT supporting instrumentation because we are passing
       #None to the translator.  TODO: Add back instrumentation after everything gets
       #working again, and make instrumentation feel more organized
+      from x86_translator import X86Translator
+      from x86_runtime import X86Runtime
       self.translator = X86Translator(context.before_inst_callback,self.context)
       self.runtime = X86Runtime(self.context)
       global assembler
       import x86_assembler as assembler
     elif arch == 'x86-64':
-      raise NotImplementedError( 'WE DO NOT SUPPORT 64-BIT YET' )
+      from x64_translator import X64Translator
+      from x64_runtime import X64Runtime
+      self.translator = X64Translator((lambda x: None),self.context)
+      self.runtime = X64Runtime(self.context)
+      global assembler
+      import x64_assembler as assembler
     else:
       raise NotImplementedError( 'Architecture %s is not supported'%arch )
 
@@ -75,6 +80,7 @@ class BruteForceMapper(Mapper):
       mapping[self.context.secondary_lookup_function_offset] = self.context.secondary_lookup_function_offset
     #Don't yet know mapping offset; we must compute it
     mapping[len(self.bytes)+self.base] = offset
+    print 'final offset for mapping is: 0x%x' % offset
     if not self.context.write_so:
       #For NOW, place the global data/function at the end of this because we can't necessarily fit
       #another section.  TODO: put this somewhere else
@@ -100,6 +106,7 @@ class BruteForceMapper(Mapper):
         target = last.address + len(last.bytes) #address of where in the original code we would want to jmp to
         next_target = self.translator.remap_target(last.address, mapping, target, len(bytemap[last.address]) )
         reroute = assembler.asm( 'jmp $+%s'%(next_target) )
+        #Maximum relative displacement is 32 for x86 and x64, so this works for both platforms
         if len(reroute) == 2: #Short encoding, which we do not want
           reroute+='\x90\x90\x90' #Add padding of 3 NOPs
         bytemap[last.address] += reroute
@@ -123,6 +130,7 @@ class BruteForceMapper(Mapper):
         newbytes+=m[k]
     if not self.context.write_so:
       newbytes+=self.runtime.get_auxvec_code(mapping[self.entry])
+    print 'mapping is being placed at offset: 0x%x' % len(newbytes)
     #Append mapping to end of bytes
     newbytes+=self.write_mapping(mapping,self.base,len(self.bytes))
     return newbytes
@@ -131,6 +139,8 @@ class BruteForceMapper(Mapper):
     bytes = b''
     for addr in range(base,base+size):
       if addr in mapping:
+        if addr < 10:
+          print 'offset for 0x%x: 0x%x' % (addr, mapping[addr])
         bytes+=struct.pack('<I',mapping[addr]) #Write our offset in little endian
       else:
         #print 'No mapping for 0x%x'%addr

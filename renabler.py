@@ -39,6 +39,8 @@ class Context(object):
 #determined by the host reloc table's 'sh_link' entry.  In our case it's the dynsym table.
 def ELF32_R_SYM(val):
   return (val) >> 8
+def ELF64_R_SYM(val):
+  return (val) >> 32
 
 #Globals: If there end up being too many of these, put them in a Context & pass them around
 '''plt = {}
@@ -120,11 +122,12 @@ class Rewriter(object):
     maxaddr += ( 0x1000 - maxaddr%0x1000 ) # Align to page boundary
     return maxaddr
 
-  def rewrite(self,fname):
+  def rewrite(self,fname,arch):
     offs = size = addr = 0
     with open(fname,'rb') as f:
       elffile = ELFFile(f)
       relplt = None
+      relaplt = None
       dynsym = None
       entry = elffile.header.e_entry #application entry point
       for section in elffile.iter_sections():
@@ -133,12 +136,18 @@ class Rewriter(object):
           offs = section.header.sh_offset
           size = section.header.sh_size
           addr = section.header.sh_addr
+          self.context.oldbase = addr
+          # If .text section is large enough to hold all new segments, we can move the phdrs there
+          if size >= elffile.header['e_phentsize']*(elffile.header['e_phnum']+self.context.num_new_segments+1):
+            self.context.move_phdrs_to_text = True
         if section.name == '.plt':
           self.context.plt['addr'] = section.header['sh_addr']
           self.context.plt['size'] = section.header['sh_size']
           self.context.plt['data'] = section.data()
-        if section.name == '.rel.plt': #TODO: x64 has .rela.plt
+        if section.name == '.rel.plt':
           relplt = section
+        if section.name == '.rela.plt': #x64 has .rela.plt
+          relaplt = section
         if section.name == '.dynsym':
           dynsym = section
         if section.name == '.symtab':
@@ -154,6 +163,14 @@ class Rewriter(object):
           if dynsym:
             name = dynsym.get_symbol(ds_ent).name #Get name of symbol
             self.context.plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
+      elif relaplt is not None:
+        for rel in relaplt.iter_relocations():
+          got_off = rel['r_offset'] #Get GOT offset address for this entry
+          ds_ent = ELF64_R_SYM(rel['r_info']) #Get offset into dynamic symbol table
+          if dynsym:
+            name = dynsym.get_symbol(ds_ent).name #Get name of symbol
+            self.context.plt['entries'][got_off] = name #Insert this mapping from GOT offset address to symbol name
+        #print self.context.plt
       else:
           print 'binary does not contain plt'
       if self.context.write_so:
@@ -170,11 +187,9 @@ class Rewriter(object):
       for seg in elffile.iter_segments():
         if seg.header['p_flags'] == 5 and seg.header['p_type'] == 'PT_LOAD': #Executable load seg
           print "Base address: %s"%hex(seg.header['p_vaddr'])
-          md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32) #TODO: Allow to toggle 32/64
-          md.detail = True
           bytes = seg.data()
           base = seg.header['p_vaddr']
-          mapper = BruteForceMapper('x86',bytes,base,entry,self.context)
+          mapper = BruteForceMapper(arch,bytes,base,entry,self.context)
           mapping = mapper.gen_mapping()
           newbytes = mapper.gen_newcode(mapping)
           #Perhaps I could find a better location to set the value of global_flag
@@ -220,14 +235,14 @@ class Rewriter(object):
   	  print 'code increase: %d%%'%(((len(newbytes)-len(bytes))/float(len(bytes)))*100)
           lookup = mapper.runtime.get_lookup_code(base,len(bytes),self.context.lookup_function_offset,0x8f)
           print 'lookup w/unknown mapping %s'%len(lookup)
-          insts = md.disasm(lookup,0x0)
-  	  for ins in insts:
-            print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
+          #insts = md.disasm(lookup,0x0)
+  	  #for ins in insts:
+          #  print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
           lookup = mapper.runtime.get_lookup_code(base,len(bytes),self.context.lookup_function_offset,mapping[self.context.mapping_offset])
           print 'lookup w/known mapping %s'%len(lookup)
-          insts = md.disasm(lookup,0x0)
-  	  for ins in insts:
-            print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
+          #insts = md.disasm(lookup,0x0)
+  	  #for ins in insts:
+          #  print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
           if 0x80482b4 in mapping:
   		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
           if 0x804ac40 in mapping:
@@ -238,10 +253,11 @@ class Rewriter(object):
             print 'global lookup: 0x%x'%self.context.global_lookup
           print 'local lookup: 0x%x'%self.context.lookup_function_offset
           print 'secondary local lookup: 0x%x'%self.context.secondary_lookup_function_offset
+          print 'mapping offset: 0x%x'%mapping[self.context.mapping_offset]
           with open('%s-r-map.json'%fname,'wb') as f:
             json.dump(mapping,f)
           if not self.context.write_so:
-            bin_write.rewrite(fname,fname+'-r','newbytes',self.context.newbase,mapper.runtime.get_global_mapping_bytes(),self.context.global_lookup,self.context.newbase+self.context.new_entry_off)
+            bin_write.rewrite(fname,fname+'-r','newbytes',self.context.newbase,mapper.runtime.get_global_mapping_bytes(),self.context.global_lookup,self.context.newbase+self.context.new_entry_off,offs,size,self.context.num_new_segments)
           else:
             self.context.new_entry_off = mapping[entry]
             bin_write.rewrite_noglobal(fname,fname+'-r','newbytes',self.context.newbase,self.context.newbase+self.context.new_entry_off)
@@ -258,7 +274,8 @@ class Rewriter(object):
                 self.context.secondary_lookup_function_offset,mapping[self.context.mapping_offset]))
           if not self.context.write_so:
             self.context.stat['auxvecsize'] = len(mapper.runtime.get_auxvec_code(mapping[entry]))
-            with open(self.context.popgm) as f:
+            popgm = 'x86_popgm' if arch == 'x86' else 'x64_popgm' # TODO: if other architectures are added, this will need to be changed
+            with open(popgm) as f:
               tmp=f.read()
               self.context.stat['popgmsize'] = len(tmp)
             self.context.stat['globmapsectionsize'] = len(mapper.runtime.get_global_mapping_bytes())
@@ -291,18 +308,18 @@ class Rewriter(object):
     print asm(save_register%('eax','eax','eax')).encode('hex')'''
     
 if __name__ == '__main__':
-  if len(sys.argv) == 2:
-    rewriter = Rewriter(False,False,False)
-    rewriter.rewrite(sys.argv[1])
-    #cProfile.run('renable(sys.argv[1])')
-  elif len(sys.argv) == 3 and sys.argv[1] == '-so':
-    rewriter = Rewriter(True,False,False)
-    rewriter.rewrite(sys.argv[2])
-  elif len(sys.argv) == 3 and sys.argv[1] == '-execonly':
-    rewriter = Rewriter(False,True,False)
-    rewriter.rewrite(sys.argv[2])
-  elif len(sys.argv) == 4 and ( (sys.argv[1] == '-execonly' and sys.argv[2] == '-nopic') or (sys.argv[2] == '-execonly' and sys.argv[1] == '-nopic') ):
-    rewriter = Rewriter(False,True,True)
-    rewriter.rewrite(sys.argv[3])
-  else:
-    print "Error: must pass executable filename.\nCorrect usage: %s [-so/[-execonly [-nopic]]] <filename>"%sys.argv[0]
+  import argparse
+
+  parser = argparse.ArgumentParser(description='''Rewrite a binary so that the code is relocated.
+Running this script from the terminal does not allow any instrumentation.
+For that, use this as a library instead.''')
+  parser.add_argument('filename',help='The executable file to rewrite.')
+  parser.add_argument('--so',action='store_true',help='Write a shared object.')
+  parser.add_argument('--execonly',action='store_true',help='Write only a main executable without .so support.')
+  parser.add_argument('--nopic',action='store_true',help='Write binary without support for arbitrary pic.  It still supports common compiler-generated pic.')
+  parser.add_argument('--arch',default='x86',help='The architecture of the binary.  Default is \'x86\'.')
+  args = parser.parse_args()
+  rewriter = Rewriter(args.so,args.execonly,args.nopic)
+  rewriter.rewrite(args.filename,args.arch)
+  #cProfile.run('renable(args.filename,args.arch)')
+

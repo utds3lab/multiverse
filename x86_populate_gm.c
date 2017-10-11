@@ -1,7 +1,7 @@
 /*
- * debug: gcc -m32 -Wall -DDEBUG -fno-toplevel-reorder -masm=intel -O1 populate_gm.c
- * build: gcc -m32 -Wall -nostdlib -fno-toplevel-reorder -masm=intel -O1 populate_gm.c
- * dd if=a.out of=popgm skip=text_offset bs=1 count=text_size
+ * debug: gcc -o x86_populate_gm -m32 -Wall -DDEBUG -fno-toplevel-reorder -masm=intel -O1 x86_populate_gm.c
+ * build: gcc -o x86_populate_gm -m32 -Wall -nostdlib -fno-toplevel-reorder -masm=intel -O1 x86_populate_gm.c
+ * dd if=x86_populate_gm of=x86_popgm skip=text_offset bs=1 count=text_size
  *
  * Read and parse /proc/self/maps filling in the global mapping
  *

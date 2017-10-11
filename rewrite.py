@@ -6,7 +6,7 @@ import shutil
 from renabler import Rewriter
 
 def extract_libraries(fname):
-  result = subprocess.check_output('ldd %s'%sys.argv[1], shell=True)
+  result = subprocess.check_output('ldd %s'%fname, shell=True)
   libs = result.split('\n')
   paths = []
   for lib in libs:
@@ -27,19 +27,20 @@ def extract_dynamic_libraries(fname, libpath):
         path = f.readline()
   return paths
 
-def rewrite_libraries(libpath,paths):
+def rewrite_libraries(libpath,paths,arch):
   rewriter = Rewriter(True,False,False)
   for path in paths:
     (base,fname) = os.path.split(path)
     libname = os.path.join(libpath,fname)
     shutil.copy(path,libname)
-    rewriter.rewrite(libname)
+    rewriter.rewrite(libname,arch)
     os.remove(libname)
     shutil.move(libname+'-r',libname)
     shutil.move(libname+'-r-map.json',libname+'-map.json')
     shutil.move(libname+'-r-stat.json',libname+'-stat.json')
 
 if __name__ == '__main__':
+  arch = 'x86'
   if len(sys.argv) == 2 or len(sys.argv) == 3:
     fpath = ''
     dynamic_only = False
@@ -49,6 +50,8 @@ if __name__ == '__main__':
       fpath = sys.argv[2]
       if sys.argv[1] == '-d':
         dynamic_only = True
+      if sys.argv[1] == '-64':
+        arch = 'x86-64'
     
     paths = []
     
@@ -64,12 +67,12 @@ if __name__ == '__main__':
     paths.extend(extract_dynamic_libraries(fname,libpath))
     print 'Rewriting libraries'
     print paths
-    rewrite_libraries(libpath,paths)
+    rewrite_libraries(libpath,paths,arch)
     
     if not dynamic_only:
       print 'Rewriting main binary'
       rewriter = Rewriter(False,False,False)
-      rewriter.rewrite(fpath)
+      rewriter.rewrite(fpath,arch)
     
     print 'Writing runnable .sh'
     with open(fpath+'-r.sh', 'w') as f:
