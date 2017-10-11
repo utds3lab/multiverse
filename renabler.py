@@ -230,18 +230,18 @@ class Rewriter(object):
             #print x
             cache+='%d,'%int(x.encode('hex'),16)
           #print cache
-  	#print maptext.encode('hex')
+  	  #print maptext.encode('hex')
           print '0x%x'%(base+len(bytes))
-  	print 'code increase: %d%%'%(((len(newbytes)-len(bytes))/float(len(bytes)))*100)
+  	  print 'code increase: %d%%'%(((len(newbytes)-len(bytes))/float(len(bytes)))*100)
           lookup = mapper.runtime.get_lookup_code(base,len(bytes),self.context.lookup_function_offset,0x8f)
           print 'lookup w/unknown mapping %s'%len(lookup)
           #insts = md.disasm(lookup,0x0)
-  	#for ins in insts:
+  	  #for ins in insts:
           #  print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
           lookup = mapper.runtime.get_lookup_code(base,len(bytes),self.context.lookup_function_offset,mapping[self.context.mapping_offset])
           print 'lookup w/known mapping %s'%len(lookup)
           #insts = md.disasm(lookup,0x0)
-  	#for ins in insts:
+  	  #for ins in insts:
           #  print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
           if 0x80482b4 in mapping:
   		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
