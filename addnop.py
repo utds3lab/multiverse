@@ -2,7 +2,7 @@
 
 import sys
 from elftools.elf.elffile import ELFFile
-from renabler import Rewriter
+from multiverse import Rewriter
 from assembler import _asm
 
 def count_instruction(inst):
