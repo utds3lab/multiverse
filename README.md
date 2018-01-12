@@ -1,6 +1,6 @@
 # Multiverse
 
-*Multiverse* is a static binary rewriter with an emphasis on simplicity and correctness.  It does not rely on heuristics to perfrom its rewriting, and it attempts to make as few assumptions as possible to produce a rewritten binary.  Details about Multiverse can be found in the paper "Superset Disassembly: Statically Rewriting x86 Binaries Without Heuristics."
+*Multiverse* is a static binary rewriter with an emphasis on simplicity and correctness.  It does not rely on heuristics to perform its rewriting, and it attempts to make as few assumptions as possible to produce a rewritten binary.  Details about Multiverse can be found in the paper "Superset Disassembly: Statically Rewriting x86 Binaries Without Heuristics."
 
 Multiverse currently supports 32-bit and 64-bit x86 binaries.
 
