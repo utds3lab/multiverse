@@ -424,4 +424,8 @@ class X64Runtime(object):
     # 8 * 3 = 24 bytes per entry * 1024 entries = 0x6000 (24576) bytes.  If a binary
     # has more than 1024 libraries, the program will most likely segfault.
     globalbytes += '\x00'*0x6000
+    # Allocate extra space for any additional global variables that
+    # instrumentation code might require
+    if self.context.alloc_globals > 0:
+      globalbytes += '\x00'*self.context.alloc_globals
     return globalbytes

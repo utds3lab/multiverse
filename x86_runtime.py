@@ -276,6 +276,8 @@ class X86Runtime(object):
     #the application is able to use most of the entire 4GB address space, and the kernel only
     #holds onto a tiny 8KB at the top of the address space.
     globalbytes += '\xff'*((0xffffe000>>12)<<2)
+    # Allocate extra space for any additional global variables that
+    # instrumentation code might require
     if self.context.alloc_globals > 0:
       globalbytes += '\x00'*self.context.alloc_globals
     return globalbytes

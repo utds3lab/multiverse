@@ -18,13 +18,19 @@ Multiverse is written in Python, but its code to generate a binary's global mapp
 
 ## Running
 
-Multiverse can be run directly, but this will only rewrite binaries with no instrumentation.  This can be used to make sure that everything is installed correctly or to debug changes to the rewriter.  Running `multiverse.py` on a binary will rewrite it.  It can be run like this: `python multiverse.py [options] <filename>`.  There are several flags that can be passed to Multiverse to control how a binary is rewritten:
+Multiverse can be run directly, but this will only rewrite binaries with no instrumentation.  This can be used to make sure that everything is installed correctly or to debug changes to the rewriter.  Running `multiverse.py` on a binary will rewrite it.  It can be run like this: `./multiverse.py [options] <filename>`.  There are several flags that can be passed to Multiverse to control how a binary is rewritten:
 * --so to rewrite a shared object
 * --execonly to rewrite only a main binary (it will use the original, unmodified libraries)
 * --nopic to write a binary without support for arbitrary position-independent code.  It still supports common compiler-generated pic, but not arbitrary accesses to the program counter.
 * --arch to select the architecture of the binary.  Current supported architectures are `x86` and `x86-64`.  The default is `x86`.
 
-`rewrite.py` is a utility script to rewrite a binary and its libraries, so that `multiverse.py` does not have to be run manually.
+Rewritten binaries are named as the original filename with "-r" appended (e.g. `simplest64` becomes `simplest64-r`).
+
+Rewritten binaries *must* be run with the `LD_BIND_NOW` environment variable set to 1.  This prevents control from flowing to the dynamic linker at runtime.  Since we do not rewrite the dynamic linker, this is necessary for correct execution (e.g. to run `simplest-r`, type `LD_BIND_NOW=1 ./simplest-r`).
+
+A very simple example program is provided (`simplest.c`), which is automatically compiled when building Multiverse's global mapping code.  This can be used to test that Multiverse is installed correctly.  For example, to rewrite only the main executable for `simplest64`, the 64-bit version of `simplest`, type `./multiverse.py --execonly --arch x86-64 simplest64` and then run it with `LD_BIND_NOW=1 ./simplest64-r`.
+
+`rewrite.py` is a utility script to rewrite a binary and its libraries, so that `multiverse.py` does not have to be run manually for each library, and it automatically creates a directory for the rewritten libraries, plus a shell script to run the rewritten binary.  For simplicity when rewriting binaries, we recommend using this script.  For example, to rewrite `simplest64`, type `./rewrite.py -64 simplest64`, and the script will rewrite the main binary and all its required libraries (as long as they are not dynamically loaded via a mechanism such as `dlopen`; since statically determining dynamically loaded libraries is difficult, they must be manually extracted and their paths be placed in `<filename>-dynamic-libs.txt`, and then `rewrite.py` will rewrite them).  This may take several minutes.  When it is complete, run the rewritten binary with `bash simplest64-r.sh`.
 
 ## Instrumentation
 
@@ -37,6 +43,6 @@ In order to use multiverse, a script should import the Rewriter object (`from mu
 
 `exec_only` and `no_pic` are performance optimizations that will not work on all binaries.  For a main executable, `write_so` should be False, and for shared objects, `write_so` should be True.  If `exec_only` is False, then all shared objects used by the binary must be rewritten.
 
-Two simple instrumentation examples can be found in `icount.py` (insert code to increment a counter before every instruction) and `addnop.py` (insert a nop before every instruction).
+Two simple instrumentation examples can be found in `icount.py` (insert code to increment a counter before every instruction) and `addnop.py` (insert a nop before every instruction).  These are currently configured to instrument only the main executable of 64-bit binaries.  For example, to insert nops into `simplest64`, type `python addnop.py simplest64`, and to run the instrumented binary, type `LD_BIND_NOW=1 ./simplest64-r`.
 
 We are working on a higher-level API that will allow code written in C to be seamlessly called at instrumentation points, but it is not yet available.

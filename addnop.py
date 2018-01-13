@@ -3,7 +3,7 @@
 import sys
 from elftools.elf.elffile import ELFFile
 from multiverse import Rewriter
-from assembler import _asm
+from x64_assembler import _asm
 
 def count_instruction(inst):
   template = '''
@@ -21,6 +21,6 @@ if __name__ == '__main__':
     #write_so = False, exec_only = True, no_pic = True
     rewriter = Rewriter(False,True,True)
     rewriter.set_before_inst_callback(count_instruction)
-    rewriter.rewrite(sys.argv[1])
+    rewriter.rewrite(sys.argv[1],'x86-64')
   else:
     print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]
