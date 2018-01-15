@@ -19,7 +19,7 @@ if __name__ == '__main__':
     entry_point = e.header.e_entry
     f.close()
     #write_so = False, exec_only = True, no_pic = True
-    rewriter = Rewriter(False,True,True)
+    rewriter = Rewriter(False,True,False)
     rewriter.set_before_inst_callback(count_instruction)
     rewriter.rewrite(sys.argv[1],'x86-64')
   else:

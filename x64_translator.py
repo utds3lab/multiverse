@@ -9,7 +9,7 @@ class X64Translator(Translator):
   def __init__(self,before_callback,context):
     self.before_inst_callback = before_callback
     self.context = context
-    self.memory_ref_string = re.compile(u'^qword ptr \[(?P<rip>0x[0-9a-z]+) \+ (?P<offset>0x[0-9a-z]+)\]$')
+    self.memory_ref_string = re.compile(u'^qword ptr \[rip \+ (?P<offset>0x[0-9a-z]+)\]$')
     self.rip_with_offset = re.compile(u'\[rip(?: (?P<offset>[\+\-] [0x]?[0-9a-z]+))?\]') #Apparently the hex prefix is optional if the number is...unambiguous?
     # Pre-populate this instruction in the metacache so we can avoid rewriting variations of it
     metacache['        lea rbx,[rip]'] = 3
@@ -348,7 +348,7 @@ class X64Translator(Translator):
     #TODO: This is somehow still the bottleneck, so this needs to be optimized
     code = b''
     if self.context.exec_only:
-      code += self.get_remap_callbacks_code(ins.address,mapping,target)
+      code += self.get_remap_callbacks_code(ins,mapping,target)
     #NOTE: user instrumentation code comes after callbacks code.  No particular reason to put it either way,
     #other than perhaps consistency, but for now this is easier.
     inserted = self.before_inst_callback(ins)
@@ -403,7 +403,7 @@ class X64Translator(Translator):
       code += asm(template_after%(lookup_target,64))
     return code
   
-  def get_remap_callbacks_code(self,insaddr,mapping,target):
+  def get_remap_callbacks_code(self,ins,mapping,target):
     '''Checks whether the target destination (expressed as the opcode string from a jmp/call instruction)
        is in the got, then checks if it matches a function with callbacks.  It then rewrites the
        addresses if necessary.  This will *probably* always be from jmp instructions in the PLT.
@@ -412,11 +412,11 @@ class X64Translator(Translator):
     if self.memory_ref_string.match(target):
       match = self.memory_ref_string.match(target)
       #Add address of instruction after this one and the offset to get destination
-      address = int(match.group('rip'), 16) + int(match.group('offset'), 16)
+      address = (ins.address + len(ins.bytes)) + int(match.group('offset'), 16)
       if address in self.context.plt['entries']:
         if self.context.plt['entries'][address] in self.context.callbacks:
           print 'Found library call with callbacks: %s'%self.context.plt['entries'][address]
-          return self.get_callback_code( insaddr, mapping, self.context.callbacks[self.context.plt['entries'][address]] )
+          return self.get_callback_code( ins.address, mapping, self.context.callbacks[self.context.plt['entries'][address]] )
     return b''
   
   def get_callback_code(self,address,mapping,cbargs):

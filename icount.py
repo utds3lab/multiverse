@@ -37,7 +37,7 @@ if __name__ == '__main__':
     e = ELFFile(f)
     entry_point = e.header.e_entry
     f.close()
-    rewriter = Rewriter(False,True,True)
+    rewriter = Rewriter(False,True,False)
     global_addr = rewriter.alloc_globals(8,'x86-64') #8 bytes
     rewriter.set_before_inst_callback(count_instruction)
     rewriter.rewrite(sys.argv[1],'x86-64')

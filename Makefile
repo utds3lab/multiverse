@@ -7,7 +7,7 @@ popgm:
 	bash parse_popgm.sh
 
 simplest:
-	gcc -o simplest64 -m64 simplest.c
+	gcc -o simplest64 -m64 -O1 simplest.c
 	gcc -o simplest32 -m32 simplest.c 
 
 clean:

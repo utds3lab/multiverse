@@ -21,7 +21,7 @@ Multiverse is written in Python, but its code to generate a binary's global mapp
 Multiverse can be run directly, but this will only rewrite binaries with no instrumentation.  This can be used to make sure that everything is installed correctly or to debug changes to the rewriter.  Running `multiverse.py` on a binary will rewrite it.  It can be run like this: `./multiverse.py [options] <filename>`.  There are several flags that can be passed to Multiverse to control how a binary is rewritten:
 * --so to rewrite a shared object
 * --execonly to rewrite only a main binary (it will use the original, unmodified libraries)
-* --nopic to write a binary without support for arbitrary position-independent code.  It still supports common compiler-generated pic, but not arbitrary accesses to the program counter.
+* --nopic to write a binary without support for arbitrary position-independent code.  It still supports common compiler-generated pic, but not arbitrary accesses to the program counter.  This is not currently recommended for 64-bit binaries.
 * --arch to select the architecture of the binary.  Current supported architectures are `x86` and `x86-64`.  The default is `x86`.
 
 Rewritten binaries are named as the original filename with "-r" appended (e.g. `simplest64` becomes `simplest64-r`).
@@ -39,7 +39,7 @@ Multiverse is used as a Python library to instrument binaries.  Right now, the i
 In order to use multiverse, a script should import the Rewriter object (`from multiverse import Rewriter`) and then create an instance of Rewriter.  Its constructor takes three boolean arguments:
 * `write_so` to rewrite a shared object
 * `exec_only` to rewrite only a main binary (it will use the original, unmodified libraries)
-* `no_pic` to write a binary without support for arbitrary position-independent code.  It still supports common compiler-generated pic, but not arbitrary accesses to the program counter.
+* `no_pic` to write a binary without support for arbitrary position-independent code.  It still supports common compiler-generated pic, but not arbitrary accesses to the program counter.  This is not currently recommended for 64-bit binaries.
 
 `exec_only` and `no_pic` are performance optimizations that will not work on all binaries.  For a main executable, `write_so` should be False, and for shared objects, `write_so` should be True.  If `exec_only` is False, then all shared objects used by the binary must be rewritten.
 
