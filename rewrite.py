@@ -3,7 +3,7 @@ import sys,os
 import subprocess
 import shutil
 
-from renabler import Rewriter
+from multiverse import Rewriter
 
 def extract_libraries(fname):
   result = subprocess.check_output('ldd %s'%fname, shell=True)
@@ -82,4 +82,4 @@ if __name__ == '__main__':
         ld_preload += os.path.join(libpath,lname) + ' '
       f.write('#!/bin/bash\nLD_LIBRARY_PATH=./%s LD_BIND_NOW=1 LD_PRELOAD="%s" ./%s'%( fname+'-libs-r', ld_preload, fname+'-r' ) )
   else:
-    print "Error: must pass executable filename.\nCorrect usage: %s <filename>"%sys.argv[0]
+    print "Error: must pass executable filename.\nCorrect usage: %s [-d -64] <filename>\nUse -d flag to rewrite only dynamic libaries.\nUse -64 flag to rewrite 64-bit binaries."%sys.argv[0]

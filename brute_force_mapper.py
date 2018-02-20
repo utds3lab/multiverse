@@ -28,7 +28,7 @@ class BruteForceMapper(Mapper):
     elif arch == 'x86-64':
       from x64_translator import X64Translator
       from x64_runtime import X64Runtime
-      self.translator = X64Translator((lambda x: None),self.context)
+      self.translator = X64Translator(context.before_inst_callback,self.context)
       self.runtime = X64Runtime(self.context)
       global assembler
       import x64_assembler as assembler

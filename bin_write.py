@@ -68,7 +68,7 @@ def rewrite_noglobal(fname,nname,newcode,newbase,entry):
     elf.set_entry_point(entry)
     elf.write_new_elf(nname)
 
-def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry,text_section_offs,text_section_size,num_new_segments):
+def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry,text_section_offs,text_section_size,num_new_segments,arch):
   #TODO: change rewrite to take the context instead, and just retrieve the data it needs from that.
   elf = ELFManip(fname,num_adtl_segments=num_new_segments)
   if text_section_size >= elf.ehdr['e_phentsize']*(elf.ehdr['e_phnum']+num_new_segments+1):
@@ -77,7 +77,9 @@ def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry,text_secti
   with open(newcode) as f:
     newbytes = f.read()
     # IF the text section is large enough to hold the phdrs (true for a nontrivial program)
-    if text_section_size >= elf.ehdr['e_phentsize']*(elf.ehdr['e_phnum']+num_new_segments):
+    # AND the architecture is x86-64, because I have not written 32-bit code to restore the text section yet
+    # TODO: add support to 32-bit rewriter to use .text section for phdrs
+    if arch == 'x86-64' and text_section_size >= elf.ehdr['e_phentsize']*(elf.ehdr['e_phnum']+num_new_segments):
       # Place the phdrs at the start of the (original) text section, overwriting the contents
       print 'placing phdrs in .text section, overwriting contents until runtime'
       #print 'BUT for now, still do it the original way so we can do a quick test...'
@@ -90,7 +92,7 @@ def rewrite(fname,nname,newcode,newbase,newglobal,newglobalbase,entry,text_secti
       elf.add_section(duptext_section, duptext_segment)
     else:
       # Use the previous heuristics to relocate the phdrs and hope for the best
-      print '.text section too small to hold phdrs; using other heuristics to relocate phdrs'
+      print '.text section too small to hold phdrs (or 32-bit binary); using other heuristics to relocate phdrs'
       elf.relocate_phdrs()
     newtext_section = CustomSection(newbytes, sh_addr = newbase)
     newglobal_section = CustomSection(newglobal, sh_addr = newglobalbase)

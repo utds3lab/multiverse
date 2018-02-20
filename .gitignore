@@ -8,3 +8,4 @@ teeny
 .*
 *.pyc
 peda-session-*
+uncached.txt

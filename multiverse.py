@@ -2,10 +2,8 @@
 from elftools.elf.elffile import ELFFile
 import capstone
 import sys
-#from pwn import asm,context
-#context(os='linux',arch='i386')
-import assembler
-import cProfile
+#import cProfile
+import x64_assembler
 import bin_write
 import json
 import os
@@ -100,13 +98,13 @@ class Rewriter(object):
     '''
     self.context.before_inst_callback = func
 
-  def alloc_globals(self,size):
+  def alloc_globals(self,size,arch):
     '''Allocate an arbitrary amount of contiguous space for global variables for use by instrumentation code.
        Returns the address of the start of this space.
     '''
     #create a temporary mapper to get where the globals would be inserted
     self.context.alloc_globals = 0
-    mapper = BruteForceMapper('x86',b'',0,0,self.context) #TODO: When we update to support different archs, use em
+    mapper = BruteForceMapper(arch,b'',0,0,self.context)
     retval = self.context.global_lookup + len(mapper.runtime.get_global_mapping_bytes())
     #Now actually set the size of allocated space
     self.context.alloc_globals = size
@@ -243,13 +241,9 @@ class Rewriter(object):
           #insts = md.disasm(lookup,0x0)
   	  #for ins in insts:
           #  print '0x%x:\t%s\t%s\t%s'%(ins.address,str(ins.bytes).encode('hex'),ins.mnemonic,ins.op_str)
-          if 0x80482b4 in mapping:
-  		print 'simplest only: _init at 0x%x'%mapping[0x80482b4]
-          if 0x804ac40 in mapping:
-  		print 'bzip2 only: snocString at 0x%x'%mapping[0x804ac40]
           if not self.context.write_so:
-            print 'new entry point: %x'%self.context.new_entry_off
-            print 'new _start point: %x'%mapping[entry]
+            print 'new entry point: 0x%x'%(self.context.newbase + self.context.new_entry_off)
+            print 'new _start point: 0x%x'%(self.context.newbase + mapping[entry])
             print 'global lookup: 0x%x'%self.context.global_lookup
           print 'local lookup: 0x%x'%self.context.lookup_function_offset
           print 'secondary local lookup: 0x%x'%self.context.secondary_lookup_function_offset
@@ -257,7 +251,7 @@ class Rewriter(object):
           with open('%s-r-map.json'%fname,'wb') as f:
             json.dump(mapping,f)
           if not self.context.write_so:
-            bin_write.rewrite(fname,fname+'-r','newbytes',self.context.newbase,mapper.runtime.get_global_mapping_bytes(),self.context.global_lookup,self.context.newbase+self.context.new_entry_off,offs,size,self.context.num_new_segments)
+            bin_write.rewrite(fname,fname+'-r','newbytes',self.context.newbase,mapper.runtime.get_global_mapping_bytes(),self.context.global_lookup,self.context.newbase+self.context.new_entry_off,offs,size,self.context.num_new_segments,arch)
           else:
             self.context.new_entry_off = mapping[entry]
             bin_write.rewrite_noglobal(fname,fname+'-r','newbytes',self.context.newbase,self.context.newbase+self.context.new_entry_off)
