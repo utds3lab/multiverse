@@ -46,3 +46,18 @@ In order to use multiverse, a script should import the Rewriter object (`from mu
 Two simple instrumentation examples can be found in `icount.py` (insert code to increment a counter before every instruction) and `addnop.py` (insert a nop before every instruction).  These are currently configured to instrument only the main executable of 64-bit binaries.  For example, to insert nops into `simplest64`, type `python addnop.py simplest64`, and to run the instrumented binary, type `LD_BIND_NOW=1 ./simplest64-r`.
 
 We are working on a higher-level API that will allow code written in C to be seamlessly called at instrumentation points, but it is not yet available.
+
+## Citing
+
+If you create a research work that uses Multiverse, please cite the associated paper:
+
+```
+@inproceedings{Multiverse:NDSS18,
+  author    = {Erick Bauman and Zhiqiang Lin and Kevin Hamlen},
+  title     = {Superset Disassembly: Statically Rewriting x86 Binaries Without Heuristics},
+  booktitle = {Proceedings of the 25th Annual Network and Distributed System Security Symposium (NDSS'18)},
+  address   = {San Diego, CA},
+  month     = {February},
+  year      = 2018,
+}
+```
